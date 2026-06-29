@@ -128,8 +128,8 @@ describe("synthesizeSummary", () => {
       expect(body.model).toBe("gpt-4o");
     });
 
-    it("throws an error without the API key when the response is not OK", async () => {
-      mockFetch.mockResolvedValueOnce({
+    it("throws an error when the response is not OK and does not leak the API key", async () => {
+      mockFetch.mockResolvedValue({
         ok: false,
         status: 401,
         statusText: "Unauthorized"
@@ -218,8 +218,8 @@ describe("synthesizeSummary", () => {
       expect(body.model).toBe("claude-sonnet-4-20250514");
     });
 
-    it("throws an error without the API key when the response is not OK", async () => {
-      mockFetch.mockResolvedValueOnce({
+    it("throws an error when the response is not OK and does not leak the API key", async () => {
+      mockFetch.mockResolvedValue({
         ok: false,
         status: 403,
         statusText: "Forbidden"

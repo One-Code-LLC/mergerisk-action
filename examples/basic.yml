@@ -1,0 +1,21 @@
+name: MergeRisk
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  risk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: your-org/mergerisk-action@v0
+        with:
+          github-token: ${{ github.token }}
+          provider: none
+          fail-on-risk: critical

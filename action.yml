@@ -1,0 +1,47 @@
+name: "MergeRisk"
+description: "Post a concise merge-risk report on pull requests."
+author: "MergeRisk"
+branding:
+  icon: "shield"
+  color: "blue"
+inputs:
+  github-token:
+    description: "GitHub token used to read pull requests and write comments."
+    required: true
+    default: "${{ github.token }}"
+  provider:
+    description: "AI provider: none, openai, or anthropic."
+    required: false
+    default: "none"
+  model:
+    description: "Model name for AI synthesis."
+    required: false
+    default: ""
+  api-key:
+    description: "API key for the selected AI provider."
+    required: false
+    default: ""
+  fail-on-risk:
+    description: "Fail the workflow at this risk level: none, medium, high, or critical."
+    required: false
+    default: "none"
+  max-patch-lines:
+    description: "Maximum patch lines sent to AI synthesis."
+    required: false
+    default: "1200"
+  comment-mode:
+    description: "Comment behavior: update or new."
+    required: false
+    default: "update"
+  risk-profile-path:
+    description: "Optional path to a custom YAML risk profile."
+    required: false
+    default: ""
+outputs:
+  risk-level:
+    description: "Computed risk level: low, medium, high, or critical."
+  risk-score:
+    description: "Computed deterministic risk score."
+runs:
+  using: "node24"
+  main: "dist/index.js"

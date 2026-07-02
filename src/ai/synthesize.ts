@@ -31,6 +31,7 @@ Score: ${assessment.score}
 Signals: ${assessment.signals
   .map((signal: RiskSignal) => `${signal.category}:${signal.severity}`)
   .join(", ")}
+Reviewer focus: ${assessment.reviewerFocus.join(", ")}
 
 Changed files and truncated patches:
 ${truncatePatch(files, maxPatchLines)}

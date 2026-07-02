@@ -28,13 +28,21 @@ function validateRules(rules: RiskRule[]): void {
 }
 
 function parseObjectShape(
-  data: Record<string, { severity: string; patterns: string[] }>,
+  data: Record<string, unknown>,
 ): RiskRule[] {
-  return Object.entries(data).map(([category, rule]) => ({
-    category,
-    severity: rule.severity as RiskRule["severity"],
-    patterns: rule.patterns,
-  }));
+  return Object.entries(data).map(([category, rule]) => {
+    if (rule === null || typeof rule !== "object") {
+      throw new Error(
+        `Invalid risk profile: rule for "${category}" must define severity and patterns`,
+      );
+    }
+    const r = rule as { severity: string; patterns: string[] };
+    return {
+      category,
+      severity: r.severity as RiskRule["severity"],
+      patterns: r.patterns,
+    };
+  });
 }
 
 function parseArrayShape(
@@ -61,7 +69,14 @@ export async function loadRiskRules(profilePath: string): Promise<RiskRule[]> {
     );
   }
 
-  const parsed = parseYaml(raw);
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch {
+    throw new Error(
+      `Invalid risk profile at "${profilePath}": could not parse YAML`,
+    );
+  }
 
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Invalid risk profile: YAML must be an object or array");

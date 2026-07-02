@@ -1,16 +1,7 @@
+import type { GitHub } from "@actions/github/lib/utils.js";
 import type { PullRequestFile } from "../types.js";
 
-/* Minimal shape of the paginated-rest octokit used by @actions/github. */
-interface Octokit {
-  paginate: <T>(method: unknown, params: Record<string, unknown>) => Promise<T[]>;
-  rest: {
-    pulls: {
-      listFiles: {
-        endpoint: string;
-      };
-    };
-  };
-}
+type Octokit = InstanceType<typeof GitHub>;
 
 interface PullRequestRef {
   owner: string;
@@ -30,7 +21,7 @@ export async function listPullRequestFiles(
     per_page: 100
   });
 
-  return files.map((file) => ({
+  return files.map((file: { filename: string; status: string; additions: number; deletions: number; changes: number; patch?: string }) => ({
     filename: file.filename,
     status: file.status,
     additions: file.additions,

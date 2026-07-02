@@ -128,6 +128,30 @@ describe("synthesizeSummary", () => {
       expect(body.model).toBe("gpt-4o");
     });
 
+    it("includes reviewerFocus in the prompt content", async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "summary" } }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "openai",
+        apiKey: "sk-test"
+      });
+      const assessment = makeAssessment({
+        reviewerFocus: ["auth/session.ts", "db/migrations"]
+      });
+
+      await synthesizeSummary(config, assessment, [makeFile("test.ts")]);
+
+      const callArg = mockFetch.mock.calls[0][1];
+      const body = JSON.parse(callArg.body);
+      const content = body.messages[0].content;
+      expect(content).toContain("Reviewer focus: auth/session.ts, db/migrations");
+    });
+
     it("throws an error when the response is not OK and does not leak the API key", async () => {
       mockFetch.mockResolvedValue({
         ok: false,

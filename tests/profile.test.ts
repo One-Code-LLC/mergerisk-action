@@ -113,4 +113,40 @@ describe("loadRiskRules", () => {
       loadRiskRules("/nonexistent/mergerisk-custom-profile.yml"),
     ).rejects.toThrow(/nonexistent/);
   });
+
+  it("rejects malformed YAML syntax with error that does NOT include raw file content", async () => {
+    const dir = await tmpDir();
+    const filePath = join(dir, "profile.yml");
+    await writeFile(filePath, "foo: [unterminated");
+
+    await expect(loadRiskRules(filePath)).rejects.toThrow(
+      /Invalid risk profile.*could not parse YAML/,
+    );
+    await expect(loadRiskRules(filePath)).rejects.not.toThrow(
+      /unterminated/,
+    );
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("rejects object-shape entry with null value with clear Invalid risk profile error, not TypeError", async () => {
+    const dir = await tmpDir();
+    const filePath = join(dir, "profile.yml");
+    await writeFile(
+      filePath,
+      [
+        "custom_rule:",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(loadRiskRules(filePath)).rejects.toThrow(
+      /Invalid risk profile/,
+    );
+    await expect(loadRiskRules(filePath)).rejects.not.toThrow(
+      /TypeError/,
+    );
+
+    await rm(dir, { recursive: true, force: true });
+  });
 });

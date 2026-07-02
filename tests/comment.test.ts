@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Octokit } from "../src/github/comment.js";
 import { upsertReportComment } from "../src/github/comment.js";
 import { reportMarker } from "../src/report/markdown.js";
 
@@ -18,7 +19,7 @@ describe("upsertReportComment", () => {
       }
     };
 
-    await upsertReportComment(octokit as never, {
+    await upsertReportComment(octokit as unknown as Octokit, {
       owner: "acme",
       repo: "app",
       pullNumber: 7,
@@ -56,7 +57,7 @@ describe("upsertReportComment", () => {
       }
     };
 
-    await upsertReportComment(octokit as never, {
+    await upsertReportComment(octokit as unknown as Octokit, {
       owner: "acme",
       repo: "app",
       pullNumber: 7,
@@ -89,7 +90,7 @@ describe("upsertReportComment", () => {
       }
     };
 
-    await upsertReportComment(octokit as never, {
+    await upsertReportComment(octokit as unknown as Octokit, {
       owner: "acme",
       repo: "app",
       pullNumber: 7,
@@ -120,7 +121,7 @@ describe("upsertReportComment", () => {
       }
     };
 
-    await upsertReportComment(octokit as never, {
+    await upsertReportComment(octokit as unknown as Octokit, {
       owner: "acme",
       repo: "app",
       pullNumber: 42,
@@ -148,7 +149,7 @@ describe("upsertReportComment", () => {
       }
     };
 
-    await upsertReportComment(octokit as never, {
+    await upsertReportComment(octokit as unknown as Octokit, {
       owner: "acme",
       repo: "app",
       pullNumber: 7,
@@ -180,7 +181,7 @@ describe("upsertReportComment", () => {
       }
     };
 
-    await upsertReportComment(octokit as never, {
+    await upsertReportComment(octokit as unknown as Octokit, {
       owner: "acme",
       repo: "app",
       pullNumber: 7,
@@ -196,5 +197,41 @@ describe("upsertReportComment", () => {
       comment_id: 2,
       body: "updated report"
     });
+  });
+
+  it("skips comments with null body when searching for marker", async () => {
+    const updateComment = vi.fn();
+    const createComment = vi.fn();
+    const listComments = vi.fn();
+    const octokit = {
+      paginate: vi.fn().mockResolvedValue([
+        { id: 1, body: null },
+        { id: 2, body: `${reportMarker}\nsticky report` },
+        { id: 3, body: "normal comment" }
+      ]),
+      rest: {
+        issues: {
+          listComments,
+          updateComment,
+          createComment
+        }
+      }
+    };
+
+    await upsertReportComment(octokit as unknown as Octokit, {
+      owner: "acme",
+      repo: "app",
+      pullNumber: 7,
+      body: "updated report",
+      mode: "update"
+    });
+
+    expect(updateComment).toHaveBeenCalledWith({
+      owner: "acme",
+      repo: "app",
+      comment_id: 2,
+      body: "updated report"
+    });
+    expect(createComment).not.toHaveBeenCalled();
   });
 });

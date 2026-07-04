@@ -41,6 +41,7 @@ export async function run(): Promise<void> {
       "max-patch-lines": core.getInput("max-patch-lines"),
       "comment-mode": core.getInput("comment-mode"),
       "risk-profile-path": core.getInput("risk-profile-path"),
+      "ai-timeout-ms": core.getInput("ai-timeout-ms"),
     });
 
     if (config.apiKey) {

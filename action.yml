@@ -37,6 +37,10 @@ inputs:
     description: "Optional path to a custom YAML risk profile."
     required: false
     default: ""
+  ai-timeout-ms:
+    description: "Request timeout in milliseconds for AI provider calls."
+    required: false
+    default: "30000"
 outputs:
   risk-level:
     description: "Computed risk level: low, medium, high, or critical."

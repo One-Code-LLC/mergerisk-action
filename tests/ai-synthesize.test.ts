@@ -12,6 +12,7 @@ function makeConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     maxPatchLines: 1200,
     commentMode: "update",
     riskProfilePath: "",
+    aiTimeoutMs: 30000,
     ...overrides
   };
 }
@@ -152,6 +153,28 @@ describe("synthesizeSummary", () => {
       expect(content).toContain("Reviewer focus: auth/session.ts, db/migrations");
     });
 
+    it("passes an AbortSignal signal with a timeout bound to the fetch call", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "summary" } }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "openai",
+        apiKey: "sk-test-key",
+        model: "",
+        aiTimeoutMs: 15000
+      });
+
+      await synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")]);
+
+      const callArg = mockFetch.mock.calls[0][1];
+      expect(callArg.signal).toBeInstanceOf(AbortSignal);
+      expect(callArg.signal.aborted).toBe(false);
+    });
+
     it("throws an error when the response is not OK and does not leak the API key", async () => {
       mockFetch.mockResolvedValue({
         ok: false,
@@ -265,6 +288,27 @@ describe("synthesizeSummary", () => {
         expect(String(error)).not.toContain("sk-ant-secret");
       }
     });
+
+    it("passes an AbortSignal signal to the fetch call", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          content: [{ type: "text", text: "Anthropic summary" }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "anthropic",
+        apiKey: "sk-ant-test",
+        aiTimeoutMs: 20000
+      });
+
+      await synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")]);
+
+      const callArg = mockFetch.mock.calls[0][1];
+      expect(callArg.signal).toBeInstanceOf(AbortSignal);
+      expect(callArg.signal.aborted).toBe(false);
+    });
   });
 
   describe("patch truncation", () => {
@@ -301,6 +345,21 @@ describe("synthesizeSummary", () => {
         (l: string) => !l.startsWith("Return ")
       );
       expect(patchLines.length).toBeLessThanOrEqual(7); // 5 maxPatchLines + 1 FILE header
+    });
+  });
+
+  describe("timeout behavior", () => {
+    it("rejects when fetch throws an AbortError (simulating timeout)", async () => {
+      mockFetch.mockRejectedValue(new DOMException("The operation was aborted", "AbortError"));
+
+      const config = makeConfig({
+        provider: "openai",
+        apiKey: "sk-test-key"
+      });
+
+      await expect(
+        synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")])
+      ).rejects.toThrow("The operation was aborted");
     });
   });
 

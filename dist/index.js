@@ -40322,6 +40322,16 @@ function pickMaxPatchLines(value) {
     }
     return parsed;
 }
+function pickAiTimeoutMs(value) {
+    if (!value.trim()) {
+        return 30000;
+    }
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed < 1000 || parsed > 300000) {
+        throw new Error("ai-timeout-ms must be an integer from 1000 to 300000");
+    }
+    return parsed;
+}
 function parseConfigFromInputs(inputs) {
     const githubToken = inputs["github-token"]?.trim() ?? "";
     if (!githubToken) {
@@ -40341,6 +40351,7 @@ function parseConfigFromInputs(inputs) {
         maxPatchLines: pickMaxPatchLines(inputs["max-patch-lines"] ?? ""),
         commentMode: pickCommentMode(inputs["comment-mode"] ?? ""),
         riskProfilePath: inputs["risk-profile-path"]?.trim() ?? "",
+        aiTimeoutMs: pickAiTimeoutMs(inputs["ai-timeout-ms"] ?? ""),
     };
 }
 
@@ -40385,7 +40396,8 @@ async function synthesizeWithOpenAI(config, assessment, files) {
                 { role: "user", content: promptFor(assessment, files, config.maxPatchLines) }
             ],
             temperature: 0.2
-        })
+        }),
+        signal: AbortSignal.timeout(config.aiTimeoutMs)
     });
     if (!response.ok) {
         throw new Error(`OpenAI synthesis failed with status ${response.status}`);
@@ -40407,7 +40419,8 @@ async function synthesizeWithAnthropic(config, assessment, files) {
             messages: [
                 { role: "user", content: promptFor(assessment, files, config.maxPatchLines) }
             ]
-        })
+        }),
+        signal: AbortSignal.timeout(config.aiTimeoutMs)
     });
     if (!response.ok) {
         throw new Error(`Anthropic synthesis failed with status ${response.status}`);
@@ -40493,61 +40506,89 @@ _MergeRisk is advisory. It does not replace human review, tests, or security sca
 
 ;// CONCATENATED MODULE: ./src/github/comment.ts
 
+
+/**
+ * Returns true when the error is an HTTP 403 from the GitHub API,
+ * indicating the GITHUB_TOKEN is read-only (fork PR scenario).
+ */
+function is403Error(error) {
+    return (typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        error.status === 403);
+}
+async function writeToJobSummary(body) {
+    await core.summary.addRaw(body).write();
+}
 async function upsertReportComment(octokit, options) {
-    if (options.mode === "new") {
+    try {
+        if (options.mode === "new") {
+            await octokit.rest.issues.createComment({
+                owner: options.owner,
+                repo: options.repo,
+                issue_number: options.pullNumber,
+                body: options.body
+            });
+            return;
+        }
+        const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+            owner: options.owner,
+            repo: options.repo,
+            issue_number: options.pullNumber,
+            per_page: 100
+        });
+        const existing = comments.find((comment) => comment.body?.includes(reportMarker));
+        if (existing) {
+            await octokit.rest.issues.updateComment({
+                owner: options.owner,
+                repo: options.repo,
+                comment_id: existing.id,
+                body: options.body
+            });
+            return;
+        }
         await octokit.rest.issues.createComment({
             owner: options.owner,
             repo: options.repo,
             issue_number: options.pullNumber,
             body: options.body
         });
-        return;
-    }
-    const comments = await octokit.paginate(octokit.rest.issues.listComments, {
-        owner: options.owner,
-        repo: options.repo,
-        issue_number: options.pullNumber,
-        per_page: 100
-    });
-    const existing = comments.find((comment) => comment.body?.includes(reportMarker));
-    if (existing) {
-        await octokit.rest.issues.updateComment({
+        const commentsAfter = await octokit.paginate(octokit.rest.issues.listComments, {
             owner: options.owner,
             repo: options.repo,
-            comment_id: existing.id,
-            body: options.body
+            issue_number: options.pullNumber,
+            per_page: 100
         });
-        return;
-    }
-    await octokit.rest.issues.createComment({
-        owner: options.owner,
-        repo: options.repo,
-        issue_number: options.pullNumber,
-        body: options.body
-    });
-    const commentsAfter = await octokit.paginate(octokit.rest.issues.listComments, {
-        owner: options.owner,
-        repo: options.repo,
-        issue_number: options.pullNumber,
-        per_page: 100
-    });
-    const markers = commentsAfter.filter((c) => c.body?.includes(reportMarker));
-    if (markers.length > 1) {
-        markers.sort((a, b) => a.id - b.id);
-        const [keeper, ...extras] = markers;
-        for (const m of extras) {
-            await octokit.rest.issues.deleteComment({
+        const markers = commentsAfter.filter((c) => c.body?.includes(reportMarker));
+        if (markers.length > 1) {
+            markers.sort((a, b) => a.id - b.id);
+            const [keeper, ...extras] = markers;
+            for (const m of extras) {
+                await octokit.rest.issues.deleteComment({
+                    owner: options.owner,
+                    repo: options.repo,
+                    comment_id: m.id
+                });
+            }
+            await octokit.rest.issues.updateComment({
                 owner: options.owner,
                 repo: options.repo,
-                comment_id: m.id
+                comment_id: keeper.id,
+                body: options.body
             });
         }
-        await octokit.rest.issues.updateComment({
-            owner: options.owner,
-            repo: options.repo,
-            comment_id: keeper.id,
-            body: options.body
-        });
+    }
+    catch (error) {
+        if (is403Error(error)) {
+            core.warning("Unable to post or update the PR comment because GITHUB_TOKEN is read-only " +
+                "on pull requests from forks. The full report has been written to the " +
+                "job summary instead. " +
+                "See https://github.com/One-Code-LLC/mergerisk-action#fork-pull-requests " +
+                "for details.");
+            await writeToJobSummary(options.body);
+            return;
+        }
+        throw error;
     }
 }
 
@@ -43304,6 +43345,7 @@ async function run() {
             "max-patch-lines": core.getInput("max-patch-lines"),
             "comment-mode": core.getInput("comment-mode"),
             "risk-profile-path": core.getInput("risk-profile-path"),
+            "ai-timeout-ms": core.getInput("ai-timeout-ms"),
         });
         if (config.apiKey) {
             core.setSecret(config.apiKey);
@@ -43315,7 +43357,13 @@ async function run() {
         const rules = await loadRiskRules(config.riskProfilePath);
         const files = await listPullRequestFiles(octokit, { owner, repo, pullNumber });
         const assessment = assessRisk(files, rules);
-        const summary = await synthesizeSummary(config, assessment, files);
+        let summary = "";
+        try {
+            summary = await synthesizeSummary(config, assessment, files);
+        }
+        catch (err) {
+            core.warning(`AI synthesis skipped: ${err instanceof Error ? err.message : String(err)}`);
+        }
         const body = renderReport(assessment, summary);
         await upsertReportComment(octokit, {
             owner,

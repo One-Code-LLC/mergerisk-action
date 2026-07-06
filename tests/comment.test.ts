@@ -1,7 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Octokit } from "../src/github/comment.js";
 import { upsertReportComment } from "../src/github/comment.js";
 import { reportMarker } from "../src/report/markdown.js";
+
+/* ------------------------------------------------------------------ */
+/*  Mock @actions/core so we can assert on warning / summary calls    */
+/* ------------------------------------------------------------------ */
+
+vi.mock("@actions/core", () => ({
+  warning: vi.fn(),
+  summary: {
+    addRaw: vi.fn().mockReturnThis(),
+    write: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+import * as core from "@actions/core";
 
 describe("upsertReportComment", () => {
   it("update mode updates an existing comment containing the marker", async () => {
@@ -233,5 +247,146 @@ describe("upsertReportComment", () => {
       body: "updated report"
     });
     expect(createComment).not.toHaveBeenCalled();
+  });
+
+  /* ---------- 403 graceful degradation tests ---------- */
+
+  describe("403 graceful degradation", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("warns and writes to job summary when createComment throws 403 in new mode", async () => {
+      const listComments = vi.fn();
+      const updateComment = vi.fn();
+      const createComment = vi.fn().mockRejectedValue({ status: 403, message: "Forbidden" });
+      const octokit = {
+        paginate: vi.fn(),
+        rest: {
+          issues: { listComments, updateComment, createComment }
+        }
+      };
+
+      await upsertReportComment(octokit as unknown as Octokit, {
+        owner: "acme",
+        repo: "app",
+        pullNumber: 7,
+        body: "full report body",
+        mode: "new"
+      });
+
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining("GITHUB_TOKEN is read-only")
+      );
+      expect(core.summary.addRaw).toHaveBeenCalledWith("full report body");
+      expect(core.summary.write).toHaveBeenCalledOnce();
+      // The function resolved without throwing
+    });
+
+    it("warns and writes to job summary when updateComment throws 403 in update mode", async () => {
+      const listComments = vi.fn();
+      const updateComment = vi.fn().mockRejectedValue({ status: 403, message: "Forbidden" });
+      const createComment = vi.fn();
+      const octokit = {
+        paginate: vi.fn().mockResolvedValue([{ id: 42, body: `${reportMarker}\nold` }]),
+        rest: {
+          issues: { listComments, updateComment, createComment }
+        }
+      };
+
+      await upsertReportComment(octokit as unknown as Octokit, {
+        owner: "acme",
+        repo: "app",
+        pullNumber: 7,
+        body: "full report body",
+        mode: "update"
+      });
+
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining("GITHUB_TOKEN is read-only")
+      );
+      expect(core.summary.addRaw).toHaveBeenCalledWith("full report body");
+      expect(core.summary.write).toHaveBeenCalledOnce();
+    });
+
+    it("re-throws non-403 errors (e.g. network error)", async () => {
+      const listComments = vi.fn();
+      const updateComment = vi.fn();
+      const createComment = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
+      const octokit = {
+        paginate: vi.fn(),
+        rest: {
+          issues: { listComments, updateComment, createComment }
+        }
+      };
+
+      await expect(
+        upsertReportComment(octokit as unknown as Octokit, {
+          owner: "acme",
+          repo: "app",
+          pullNumber: 7,
+          body: "body",
+          mode: "new"
+        })
+      ).rejects.toThrow("ECONNRESET");
+
+      expect(core.warning).not.toHaveBeenCalled();
+      expect(core.summary.addRaw).not.toHaveBeenCalled();
+    });
+
+    it("does not interfere with successful comment creation", async () => {
+      const listComments = vi.fn();
+      const updateComment = vi.fn();
+      const createComment = vi.fn().mockResolvedValue(undefined);
+      const octokit = {
+        paginate: vi.fn(),
+        rest: {
+          issues: { listComments, updateComment, createComment }
+        }
+      };
+
+      await upsertReportComment(octokit as unknown as Octokit, {
+        owner: "acme",
+        repo: "app",
+        pullNumber: 7,
+        body: "report body",
+        mode: "new"
+      });
+
+      expect(core.warning).not.toHaveBeenCalled();
+      expect(core.summary.addRaw).not.toHaveBeenCalled();
+      expect(core.summary.write).not.toHaveBeenCalled();
+    });
+
+    it("warns and writes to summary when createComment throws 403 in update mode (no existing comment)", async () => {
+      const listComments = vi.fn();
+      const updateComment = vi.fn();
+      let callCount = 0;
+      const createComment = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) throw { status: 403, message: "Forbidden" };
+        return Promise.resolve();
+      });
+      const octokit = {
+        paginate: vi.fn().mockResolvedValue([]),
+        rest: {
+          issues: { listComments, updateComment, createComment }
+        }
+      };
+
+      await upsertReportComment(octokit as unknown as Octokit, {
+        owner: "acme",
+        repo: "app",
+        pullNumber: 7,
+        body: "full report body",
+        mode: "update"
+      });
+
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining("GITHUB_TOKEN is read-only")
+      );
+      expect(core.summary.addRaw).toHaveBeenCalledWith("full report body");
+      expect(core.summary.write).toHaveBeenCalledOnce();
+    });
   });
 });

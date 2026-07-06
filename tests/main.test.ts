@@ -19,6 +19,7 @@ vi.mock("@actions/core", () => ({
   setOutput: vi.fn(),
   setFailed: vi.fn(),
   info: vi.fn(),
+  warning: vi.fn(),
 }));
 
 vi.mock("@actions/github", () => ({
@@ -84,6 +85,7 @@ function defaultConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     maxPatchLines: 1200,
     commentMode: "update",
     riskProfilePath: "",
+    aiTimeoutMs: 30000,
     ...overrides,
   };
 }
@@ -228,26 +230,37 @@ describe("run", () => {
     expect(core.setFailed).not.toHaveBeenCalled();
   });
 
-  /* ---------- Test 5: synthesis failure ---------- */
+  /* ---------- Test 5: synthesis failure degrades gracefully ---------- */
 
-  it("marks the action as failed when synthesis throws", async () => {
+  it("does not fail the action when synthesis throws; degrades to deterministic report", async () => {
     const config = defaultConfig();
-    const assessment = defaultAssessment({ level: "low", score: 2 });
+    const assessment = defaultAssessment({ level: "medium", score: 5 });
+    const files = defaultFiles();
+    const reportBody = "<!-- mergerisk-report -->\n## MergeRisk Report";
 
     mockContext.payload = { pull_request: { number: 42 } };
     vi.mocked(parseConfigFromInputs).mockReturnValue(config);
     vi.mocked(loadRiskRules).mockResolvedValue([]);
-    vi.mocked(listPullRequestFiles).mockResolvedValue(defaultFiles());
+    vi.mocked(listPullRequestFiles).mockResolvedValue(files);
     vi.mocked(assessRisk).mockReturnValue(assessment);
     vi.mocked(synthesizeSummary).mockRejectedValue(
       new Error("OpenAI synthesis failed with status 500"),
     );
+    vi.mocked(renderReport).mockReturnValue(reportBody);
 
     await run();
 
-    expect(core.setFailed).toHaveBeenCalledWith(
-      "OpenAI synthesis failed with status 500",
+    // Should emit a warning, not setFailed
+    expect(core.warning).toHaveBeenCalledWith(
+      "AI synthesis skipped: OpenAI synthesis failed with status 500",
     );
+    expect(core.setFailed).not.toHaveBeenCalled();
+
+    // Deterministic flow should still complete
+    expect(renderReport).toHaveBeenCalledWith(assessment, "");
+    expect(upsertReportComment).toHaveBeenCalled();
+    expect(core.setOutput).toHaveBeenCalledWith("risk-level", "medium");
+    expect(core.setOutput).toHaveBeenCalledWith("risk-score", "5");
   });
 
   /* ---------- Test 6: API key is set as secret ---------- */

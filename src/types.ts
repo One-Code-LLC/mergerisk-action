@@ -13,6 +13,7 @@ export interface ActionConfig {
   maxPatchLines: number;
   commentMode: CommentMode;
   riskProfilePath: string;
+  aiTimeoutMs: number;
 }
 
 export interface PullRequestFile {

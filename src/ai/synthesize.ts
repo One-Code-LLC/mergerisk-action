@@ -56,7 +56,8 @@ async function synthesizeWithOpenAI(
         { role: "user", content: promptFor(assessment, files, config.maxPatchLines) }
       ],
       temperature: 0.2
-    })
+    }),
+    signal: AbortSignal.timeout(config.aiTimeoutMs)
   });
 
   if (!response.ok) {
@@ -87,7 +88,8 @@ async function synthesizeWithAnthropic(
       messages: [
         { role: "user", content: promptFor(assessment, files, config.maxPatchLines) }
       ]
-    })
+    }),
+    signal: AbortSignal.timeout(config.aiTimeoutMs)
   });
 
   if (!response.ok) {

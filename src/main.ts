@@ -41,6 +41,7 @@ export async function run(): Promise<void> {
       "max-patch-lines": core.getInput("max-patch-lines"),
       "comment-mode": core.getInput("comment-mode"),
       "risk-profile-path": core.getInput("risk-profile-path"),
+      "ai-timeout-ms": core.getInput("ai-timeout-ms"),
     });
 
     if (config.apiKey) {
@@ -55,7 +56,14 @@ export async function run(): Promise<void> {
     const rules = await loadRiskRules(config.riskProfilePath);
     const files = await listPullRequestFiles(octokit, { owner, repo, pullNumber });
     const assessment = assessRisk(files, rules);
-    const summary = await synthesizeSummary(config, assessment, files);
+
+    let summary = "";
+    try {
+      summary = await synthesizeSummary(config, assessment, files);
+    } catch (err) {
+      core.warning(`AI synthesis skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     const body = renderReport(assessment, summary);
 
     await upsertReportComment(octokit, {

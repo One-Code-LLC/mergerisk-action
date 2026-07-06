@@ -47,6 +47,7 @@ jobs:
 | `max-patch-lines` | no | `1200` | Maximum patch lines sent to AI synthesis. |
 | `comment-mode` | no | `update` | `update` or `new`. |
 | `risk-profile-path` | no | empty | Optional YAML file for custom path patterns. |
+| `ai-timeout-ms` | no | `30000` | Request timeout in ms for AI provider calls. |
 
 ## Outputs
 

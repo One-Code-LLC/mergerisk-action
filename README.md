@@ -24,8 +24,8 @@ jobs:
   risk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.x
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.x
         with:
           node-version: 24
       - uses: your-org/mergerisk-action@v0
@@ -168,6 +168,68 @@ permissions:
 - `contents: read` — Check out the repository.
 - `pull-requests: read` — Read PR changed files and patches.
 - `issues: write` — Create or update PR comments (GitHub issues API).
+
+### Fork Pull Requests
+
+When a pull request is opened from a **fork**, GitHub forces `GITHUB_TOKEN`
+to **read-only** regardless of the `permissions:` block in your workflow.
+This means MergeRisk cannot post or update its report comment on fork PRs
+using the default `on: pull_request` trigger.
+
+MergeRisk handles this gracefully:
+
+- It catches the 403 write failure and emits a `warning` explaining the
+  limitation.
+- It writes the full report to the **job summary** (visible in the workflow
+  run page) so results are still accessible.
+- The workflow **does not fail** solely because the comment could not be
+  posted.
+
+#### Using `pull_request_target` (safe alternative)
+
+If you want MergeRisk to post comments on fork PRs, you can switch to the
+`pull_request_target` event. This event runs in the **base** repository
+context and grants a writable `GITHUB_TOKEN`.
+
+**Security caveat:** `pull_request_target` runs with the base repo's secrets
+and permissions. **Never check out or execute untrusted PR code** when using
+this event. Because MergeRisk only reads PR metadata and posts a comment, it
+does not execute PR code, so it is safe to use with `pull_request_target`.
+
+```yaml
+name: MergeRisk
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  risk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Check out the base branch, NOT the merge commit from the fork.
+          ref: ${{ github.event.pull_request.base.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: your-org/mergerisk-action@v0
+        with:
+          github-token: ${{ github.token }}
+          provider: none
+          fail-on-risk: critical
+```
+
+> **Important:** The `actions/checkout` step checks out the **base branch**
+> (`pull_request.base.sha`), not the fork's merge commit. This prevents any
+> untrusted PR code from being executed in your workflow. MergeRisk only reads
+> the PR diff via the API — it does not need the PR's working tree.
 
 ## Privacy and Safety
 

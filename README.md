@@ -12,7 +12,7 @@ It is not a generic AI code reviewer and does not replace human review, tests, o
 name: MergeRisk
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -24,15 +24,12 @@ jobs:
   risk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.x
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.x
+      - uses: actions/checkout@v7
         with:
-          node-version: 24
-      - uses: your-org/mergerisk-action@v0
+            ref: ${{ github.event.pull_request.base.sha }}
+      - uses: one-code-llc/mergerisk-action@bf26cdf3660bd1c52c811e62d972b2c5ddb1d567 # v0.1.0
         with:
           github-token: ${{ github.token }}
-          provider: none
-          fail-on-risk: critical
 ```
 
 ## Inputs

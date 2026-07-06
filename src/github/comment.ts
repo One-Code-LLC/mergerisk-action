@@ -1,5 +1,5 @@
 import * as core from "@actions/core";
-import type { GitHub } from "@actions/github/lib/utils.js";
+import type { GitHub } from "@actions/github/lib/utils";
 import type { CommentMode } from "../types.js";
 import { reportMarker } from "../report/markdown.js";
 

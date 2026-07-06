@@ -13,8 +13,7 @@ export async function listPullRequestFiles(
   octokit: Octokit,
   ref: PullRequestRef
 ): Promise<PullRequestFile[]> {
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-  const files = await octokit.paginate<any>(octokit.rest.pulls.listFiles, {
+  const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
     owner: ref.owner,
     repo: ref.repo,
     pull_number: ref.pullNumber,

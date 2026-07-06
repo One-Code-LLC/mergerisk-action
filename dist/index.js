@@ -44353,15 +44353,25 @@ async function synthesizeSummary(config, assessment, files) {
 
 ;// CONCATENATED MODULE: ./src/report/markdown.ts
 const reportMarker = "<!-- mergerisk-report -->";
+/**
+ * Wrap an untrusted string in backticks, escaping any characters that could
+ * break the code span or surrounding markdown structure.
+ *
+ * - Backticks inside the string are replaced with spaces so they cannot close
+ *   the outer code span.
+ * - Pipe characters are replaced with spaces to prevent table-cell breakout.
+ * - Newlines are replaced with spaces to keep the rendered text on one line.
+ */
+function code(s) {
+    return `\`${s.replace(/`/g, " ").replace(/\|/g, " ").replace(/\r?\n/g, " ")}\``;
+}
 function bulletList(items) {
     if (items.length === 0)
         return "- No specific files identified.";
-    return items.map((item) => `- \`${item}\``).join("\n");
+    return items.map((item) => `- ${code(item)}`).join("\n");
 }
 function signalRow(signal) {
-    const evidence = signal.evidence
-        .map((item) => `\`${item.replace(/\|/g, " ")}\``)
-        .join(", ");
+    const evidence = signal.evidence.map((item) => code(item)).join(", ");
     return `| ${signal.category} | ${signal.severity} | ${evidence} |`;
 }
 function checklistFor(assessment) {

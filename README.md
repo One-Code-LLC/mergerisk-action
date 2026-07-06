@@ -166,6 +166,18 @@ focus. It does not:
 Always review pull requests carefully, especially when MergeRisk reports
 **high** or **critical** risk.
 
+## Development
+
+MergeRisk ships a committed `dist/` bundle built with `ncc`. Before merging changes to `src/`, rebuild `dist/` and commit the updated bundle:
+
+```bash
+npm run build
+git add dist/
+git commit -m "chore: rebuild dist bundle"
+```
+
+CI verifies that the committed `dist/` matches a fresh build. If it does not, the `build` job fails.
+
 ---
 
 [MIT License](LICENSE)

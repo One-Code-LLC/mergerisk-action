@@ -14,12 +14,80 @@ describe("parseConfigFromInputs", () => {
     expect(config.maxPatchLines).toBe(1200);
     expect(config.commentMode).toBe("update");
     expect(config.riskProfilePath).toBe("");
+    expect(config.baseUrl).toBe("");
   });
 
   it("rejects missing github-token", () => {
     expect(() =>
       parseConfigFromInputs({}),
     ).toThrow("github-token is required");
+  });
+
+  it("accepts provider: openai-compatible with a valid base-url", () => {
+    const config = parseConfigFromInputs({
+      "github-token": "ghs_test",
+      provider: "openai-compatible",
+      "base-url": "https://api.groq.com/openai/v1",
+      "api-key": "sk-test-key",
+    });
+
+    expect(config.provider).toBe("openai-compatible");
+    expect(config.baseUrl).toBe("https://api.groq.com/openai/v1");
+  });
+
+  it("rejects provider: openai-compatible without base-url", () => {
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        provider: "openai-compatible",
+        "api-key": "sk-test-key",
+      }),
+    ).toThrow("base-url is required when provider is openai-compatible");
+  });
+
+  it("rejects provider: openai-compatible with empty base-url", () => {
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        provider: "openai-compatible",
+        "base-url": "",
+        "api-key": "sk-test-key",
+      }),
+    ).toThrow("base-url is required when provider is openai-compatible");
+  });
+
+  it("rejects invalid base-url that is not a URL", () => {
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        provider: "openai-compatible",
+        "base-url": "not-a-url",
+        "api-key": "sk-test-key",
+      }),
+    ).toThrow("Invalid base-url");
+  });
+
+  it("rejects non-http(s) base-url", () => {
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        provider: "openai-compatible",
+        "base-url": "ftp://api.example.com/v1",
+        "api-key": "sk-test-key",
+      }),
+    ).toThrow("Invalid base-url");
+  });
+
+  it("ignores base-url for non-openai-compatible providers", () => {
+    const config = parseConfigFromInputs({
+      "github-token": "ghs_test",
+      provider: "openai",
+      "base-url": "https://should-be-ignored.com",
+      "api-key": "sk-test-key",
+    });
+
+    expect(config.provider).toBe("openai");
+    expect(config.baseUrl).toBe("");
   });
 
   it("rejects unsupported provider such as other", () => {
@@ -49,6 +117,17 @@ describe("parseConfigFromInputs", () => {
         "api-key": "",
       }),
     ).toThrow("api-key is required when provider is anthropic");
+  });
+
+  it("requires api key for provider: openai-compatible", () => {
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        provider: "openai-compatible",
+        "base-url": "https://api.groq.com/openai/v1",
+        "api-key": "",
+      }),
+    ).toThrow("api-key is required when provider is openai-compatible");
   });
 
   it("accepts provider: none without api key", () => {
@@ -116,9 +195,10 @@ describe("parseConfigFromInputs", () => {
   it("trims whitespace around valid values", () => {
     const config = parseConfigFromInputs({
       "github-token": "  ghs_test  ",
-      provider: "  openai  ",
+      provider: "  openai-compatible  ",
       model: "  gpt-4  ",
       "api-key": "  sk-test-key  ",
+      "base-url": "  https://api.groq.com/openai/v1  ",
       "fail-on-risk": "  high  ",
       "max-patch-lines": "  500  ",
       "comment-mode": "  new  ",
@@ -126,9 +206,10 @@ describe("parseConfigFromInputs", () => {
     });
 
     expect(config.githubToken).toBe("ghs_test");
-    expect(config.provider).toBe("openai");
+    expect(config.provider).toBe("openai-compatible");
     expect(config.model).toBe("gpt-4");
     expect(config.apiKey).toBe("sk-test-key");
+    expect(config.baseUrl).toBe("https://api.groq.com/openai/v1");
     expect(config.failOnRisk).toBe("high");
     expect(config.maxPatchLines).toBe(500);
     expect(config.commentMode).toBe("new");

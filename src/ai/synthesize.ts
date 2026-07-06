@@ -39,12 +39,25 @@ ${truncatePatch(files, maxPatchLines)}
 Return 2-4 bullet points focused on reviewer attention and merge risk.`;
 }
 
+const OPENAI_BASE = "https://api.openai.com/v1";
+const CHAT_COMPLETIONS_PATH = "/chat/completions";
+
+function buildOpenAIEndpoint(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  if (trimmed.endsWith(CHAT_COMPLETIONS_PATH)) {
+    return trimmed;
+  }
+  return `${trimmed}${CHAT_COMPLETIONS_PATH}`;
+}
+
 async function synthesizeWithOpenAI(
   config: ActionConfig,
   assessment: RiskAssessment,
-  files: PullRequestFile[]
+  files: PullRequestFile[],
+  baseUrl: string
 ): Promise<string> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const endpoint = buildOpenAIEndpoint(baseUrl);
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -108,7 +121,8 @@ export async function synthesizeSummary(
   files: PullRequestFile[]
 ): Promise<string> {
   if (config.provider === "none") return "";
-  if (config.provider === "openai") return synthesizeWithOpenAI(config, assessment, files);
+  if (config.provider === "openai") return synthesizeWithOpenAI(config, assessment, files, OPENAI_BASE);
+  if (config.provider === "openai-compatible") return synthesizeWithOpenAI(config, assessment, files, config.baseUrl);
   if (config.provider === "anthropic") return synthesizeWithAnthropic(config, assessment, files);
   return "";
 }

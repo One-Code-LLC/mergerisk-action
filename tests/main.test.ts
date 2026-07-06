@@ -81,6 +81,7 @@ function defaultConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     provider: "none",
     model: "",
     apiKey: "",
+    baseUrl: "",
     failOnRisk: "none",
     maxPatchLines: 1200,
     commentMode: "update",

@@ -1,6 +1,6 @@
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
-export type Provider = "none" | "openai" | "anthropic";
+export type Provider = "none" | "openai" | "openai-compatible" | "anthropic";
 
 export type CommentMode = "update" | "new";
 
@@ -9,6 +9,7 @@ export interface ActionConfig {
   provider: Provider;
   model: string;
   apiKey: string;
+  baseUrl: string;
   failOnRisk: RiskLevel | "none";
   maxPatchLines: number;
   commentMode: CommentMode;
@@ -18,7 +19,7 @@ export interface ActionConfig {
 
 type RawInputs = Record<string, string>;
 
-const providers: Provider[] = ["none", "openai", "anthropic"];
+const providers: Provider[] = ["none", "openai", "openai-compatible", "anthropic"];
 const failOnRiskValues: Array<RiskLevel | "none"> = ["none", "medium", "high", "critical"];
 const commentModes: CommentMode[] = ["update", "new"];
 
@@ -57,6 +58,25 @@ function pickMaxPatchLines(value: string): number {
   return parsed;
 }
 
+function pickBaseUrl(value: string, provider: Provider): string {
+  if (provider !== "openai-compatible") {
+    return "";
+  }
+  if (!value.trim()) {
+    throw new Error("base-url is required when provider is openai-compatible");
+  }
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error(`Invalid base-url: "${value.trim()}" is not a valid URL`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`Invalid base-url: "${value.trim()}" must be an http or https URL`);
+  }
+  return value.trim();
+}
+
 function pickAiTimeoutMs(value: string): number {
   if (!value.trim()) {
     return 30000;
@@ -85,6 +105,7 @@ export function parseConfigFromInputs(inputs: RawInputs): ActionConfig {
     provider,
     model: inputs.model?.trim() ?? "",
     apiKey,
+    baseUrl: pickBaseUrl(inputs["base-url"] ?? "", provider),
     failOnRisk: pickFailOnRisk(inputs["fail-on-risk"] ?? ""),
     maxPatchLines: pickMaxPatchLines(inputs["max-patch-lines"] ?? ""),
     commentMode: pickCommentMode(inputs["comment-mode"] ?? ""),

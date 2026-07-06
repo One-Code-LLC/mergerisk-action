@@ -1,6 +1,6 @@
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
-export type Provider = "none" | "openai" | "anthropic";
+export type Provider = "none" | "openai" | "openai-compatible" | "anthropic";
 
 export type CommentMode = "update" | "new";
 
@@ -9,6 +9,7 @@ export interface ActionConfig {
   provider: Provider;
   model: string;
   apiKey: string;
+  baseUrl: string;
   failOnRisk: RiskLevel | "none";
   maxPatchLines: number;
   commentMode: CommentMode;

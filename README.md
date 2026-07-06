@@ -40,9 +40,10 @@ jobs:
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `github-token` | yes | `${{ github.token }}` | Token used to read PR data and write comments. |
-| `provider` | no | `none` | `none`, `openai`, or `anthropic`. |
+| `provider` | no | `none` | `none`, `openai`, `openai-compatible`, or `anthropic`. |
 | `model` | no | empty | Model name for AI synthesis. |
 | `api-key` | no | empty | API key for the selected provider. |
+| `base-url` | no | empty | Base URL for `openai-compatible` provider (e.g. `https://api.groq.com/openai/v1`). Required when `provider: openai-compatible`. |
 | `fail-on-risk` | no | `none` | `none`, `medium`, `high`, or `critical`. |
 | `max-patch-lines` | no | `1200` | Maximum patch lines sent to AI synthesis. |
 | `comment-mode` | no | `update` | `update` or `new`. |
@@ -103,7 +104,33 @@ by AI output.
     api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in your repository secrets.
+### OpenAI-Compatible (Groq, Mistral, Together, OpenRouter, Ollama, LM Studio, etc.)
+
+Any provider that speaks the OpenAI Chat Completions format:
+
+```yaml
+- uses: your-org/mergerisk-action@v0
+  with:
+    github-token: ${{ github.token }}
+    provider: openai-compatible
+    base-url: https://api.groq.com/openai/v1
+    api-key: ${{ secrets.GROQ_API_KEY }}
+    model: llama-3.3-70b-versatile
+```
+
+Local endpoint (Ollama / LM Studio):
+
+```yaml
+- uses: your-org/mergerisk-action@v0
+  with:
+    github-token: ${{ github.token }}
+    provider: openai-compatible
+    base-url: http://localhost:1234/v1
+    api-key: not-needed
+    model: qwen2.5-coder-7b-instruct
+```
+
+Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or your provider's API key in your repository secrets.
 
 ## Failure Threshold
 

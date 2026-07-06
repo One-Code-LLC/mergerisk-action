@@ -10,9 +10,13 @@ inputs:
     required: true
     default: "${{ github.token }}"
   provider:
-    description: "AI provider: none, openai, or anthropic."
+    description: "AI provider: none, openai, openai-compatible, or anthropic."
     required: false
     default: "none"
+  base-url:
+    description: "Base URL for openai-compatible provider (e.g. https://api.groq.com/openai/v1). Required when provider is openai-compatible."
+    required: false
+    default: ""
   model:
     description: "Model name for AI synthesis."
     required: false

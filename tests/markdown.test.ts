@@ -113,6 +113,79 @@ describe("renderReport", () => {
     expect(markdown).toContain("`another test.ts`");
   });
 
+  it("escapes backticks in filenames to prevent code span breakout", () => {
+    const assessment = makeAssessment({
+      signals: [
+        {
+          category: "test_category",
+          severity: "medium",
+          points: 2,
+          evidence: ["a`b"],
+          message: "evidence with backtick",
+        },
+      ],
+      reviewerFocus: ["a`b"],
+    });
+    const markdown = renderReport(assessment);
+
+    // Backticks inside the evidence should not close the outer code span.
+    // The backtick should be surrounded by zero-width spaces, making the
+    // rendered text contain the literal backtick character.
+    expect(markdown).not.toContain("``"); // no empty code span
+    expect(markdown).not.toContain("`a`b`"); // backtick not closing
+    // Evidence table cell should contain the escaped filename
+    expect(markdown).toContain("`a");
+    expect(markdown).toContain("b`");
+    // Reviewer focus should also be escaped
+    expect(markdown).toContain("- `a");
+    expect(markdown).toContain("b`");
+  });
+
+  it("escapes newlines in filenames to prevent multiline injection", () => {
+    const assessment = makeAssessment({
+      signals: [
+        {
+          category: "test_category",
+          severity: "medium",
+          points: 2,
+          evidence: ["file\nwith\nnewlines.ts"],
+          message: "evidence with newlines",
+        },
+      ],
+      reviewerFocus: ["file\nwith\nnewlines.ts"],
+    });
+    const markdown = renderReport(assessment);
+
+    // Newlines should be replaced with spaces
+    expect(markdown).toContain("`file with newlines.ts`");
+    expect(markdown).not.toContain("file\nwith\nnewlines.ts");
+  });
+
+  it("escapes combined malicious content in filenames", () => {
+    const assessment = makeAssessment({
+      signals: [
+        {
+          category: "test_category",
+          severity: "medium",
+          points: 2,
+          evidence: ["a`b|c\nd"],
+          message: "evidence with mixed injection",
+        },
+      ],
+      reviewerFocus: ["a`b|c\nd"],
+    });
+    const markdown = renderReport(assessment);
+
+    // Backticks are neutralized, pipes are spaces, newlines are spaces
+    expect(markdown).toContain("a");
+    expect(markdown).toContain("b");
+    expect(markdown).toContain("c");
+    expect(markdown).toContain("d");
+    // No raw pipe in backtick content (pipes become spaces)
+    expect(markdown).not.toContain("`a`b");
+    expect(markdown).not.toContain("c|d");
+  });
+
   it("renders all signal categories in Why This PR Is Risky section", () => {
     const markdown = renderReport(makeAssessment());
 

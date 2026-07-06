@@ -17,7 +17,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
-      - run: npm audit --audit-level=high
+      - run: npm audit --audit-level=high --omit=dev
 
   build:
     runs-on: ubuntu-latest

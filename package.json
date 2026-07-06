@@ -19,6 +19,9 @@
     "minimatch": "^10.0.1",
     "yaml": "^2.6.1"
   },
+  "overrides": {
+    "undici": "^6.27.0"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@vercel/ncc": "^0.38.3",

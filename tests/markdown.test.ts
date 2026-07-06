@@ -129,8 +129,7 @@ describe("renderReport", () => {
     const markdown = renderReport(assessment);
 
     // Backticks inside the evidence should not close the outer code span.
-    // The backtick should be surrounded by zero-width spaces, making the
-    // rendered text contain the literal backtick character.
+    // Backticks are replaced with spaces to prevent code-span breakout.
     expect(markdown).not.toContain("``"); // no empty code span
     expect(markdown).not.toContain("`a`b`"); // backtick not closing
     // Evidence table cell should contain the escaped filename

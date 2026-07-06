@@ -44201,7 +44201,7 @@ var core = __nccwpck_require__(7484);
 // EXTERNAL MODULE: ./node_modules/@actions/github/lib/github.js
 var github = __nccwpck_require__(3228);
 ;// CONCATENATED MODULE: ./src/config.ts
-const providers = ["none", "openai", "anthropic"];
+const providers = ["none", "openai", "openai-compatible", "anthropic"];
 const failOnRiskValues = ["none", "medium", "high", "critical"];
 const commentModes = ["update", "new"];
 function pickProvider(value) {
@@ -44235,6 +44235,25 @@ function pickMaxPatchLines(value) {
     }
     return parsed;
 }
+function pickBaseUrl(value, provider) {
+    if (provider !== "openai-compatible") {
+        return "";
+    }
+    if (!value.trim()) {
+        throw new Error("base-url is required when provider is openai-compatible");
+    }
+    let url;
+    try {
+        url = new URL(value.trim());
+    }
+    catch {
+        throw new Error(`Invalid base-url: "${value.trim()}" is not a valid URL`);
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error(`Invalid base-url: "${value.trim()}" must be an http or https URL`);
+    }
+    return value.trim();
+}
 function pickAiTimeoutMs(value) {
     if (!value.trim()) {
         return 30000;
@@ -44260,6 +44279,7 @@ function parseConfigFromInputs(inputs) {
         provider,
         model: inputs.model?.trim() ?? "",
         apiKey,
+        baseUrl: pickBaseUrl(inputs["base-url"] ?? "", provider),
         failOnRisk: pickFailOnRisk(inputs["fail-on-risk"] ?? ""),
         maxPatchLines: pickMaxPatchLines(inputs["max-patch-lines"] ?? ""),
         commentMode: pickCommentMode(inputs["comment-mode"] ?? ""),
@@ -44296,8 +44316,18 @@ ${truncatePatch(files, maxPatchLines)}
 
 Return 2-4 bullet points focused on reviewer attention and merge risk.`;
 }
-async function synthesizeWithOpenAI(config, assessment, files) {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+const OPENAI_BASE = "https://api.openai.com/v1";
+const CHAT_COMPLETIONS_PATH = "/chat/completions";
+function buildOpenAIEndpoint(baseUrl) {
+    const trimmed = baseUrl.replace(/\/+$/, "");
+    if (trimmed.endsWith(CHAT_COMPLETIONS_PATH)) {
+        return trimmed;
+    }
+    return `${trimmed}${CHAT_COMPLETIONS_PATH}`;
+}
+async function synthesizeWithOpenAI(config, assessment, files, baseUrl) {
+    const endpoint = buildOpenAIEndpoint(baseUrl);
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
             "content-type": "application/json",
@@ -44345,7 +44375,9 @@ async function synthesizeSummary(config, assessment, files) {
     if (config.provider === "none")
         return "";
     if (config.provider === "openai")
-        return synthesizeWithOpenAI(config, assessment, files);
+        return synthesizeWithOpenAI(config, assessment, files, OPENAI_BASE);
+    if (config.provider === "openai-compatible")
+        return synthesizeWithOpenAI(config, assessment, files, config.baseUrl);
     if (config.provider === "anthropic")
         return synthesizeWithAnthropic(config, assessment, files);
     return "";
@@ -47263,6 +47295,7 @@ async function run() {
             provider: core.getInput("provider"),
             model: core.getInput("model"),
             "api-key": core.getInput("api-key"),
+            "base-url": core.getInput("base-url"),
             "fail-on-risk": core.getInput("fail-on-risk"),
             "max-patch-lines": core.getInput("max-patch-lines"),
             "comment-mode": core.getInput("comment-mode"),

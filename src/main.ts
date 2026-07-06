@@ -37,6 +37,7 @@ export async function run(): Promise<void> {
       provider: core.getInput("provider"),
       model: core.getInput("model"),
       "api-key": core.getInput("api-key"),
+      "base-url": core.getInput("base-url"),
       "fail-on-risk": core.getInput("fail-on-risk"),
       "max-patch-lines": core.getInput("max-patch-lines"),
       "comment-mode": core.getInput("comment-mode"),

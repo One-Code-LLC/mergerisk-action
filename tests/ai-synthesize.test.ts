@@ -8,6 +8,7 @@ function makeConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     provider: "none",
     model: "",
     apiKey: "",
+    baseUrl: "",
     failOnRisk: "none",
     maxPatchLines: 1200,
     commentMode: "update",
@@ -197,6 +198,146 @@ describe("synthesizeSummary", () => {
       } catch (error) {
         expect(String(error)).not.toContain("sk-secret-key");
       }
+    });
+  });
+
+  describe("openai-compatible path", () => {
+    it("calls the base-url endpoint with /chat/completions appended", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "Compatible summary" } }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "openai-compatible",
+        apiKey: "sk-test-key",
+        baseUrl: "https://api.groq.com/openai/v1"
+      });
+
+      const result = await synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")]);
+
+      expect(result).toBe("Compatible summary");
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.groq.com/openai/v1/chat/completions",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            authorization: "Bearer sk-test-key",
+            "content-type": "application/json"
+          })
+        })
+      );
+    });
+
+    it("does not double-append /chat/completions when base-url already ends with it", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "Already complete" } }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "openai-compatible",
+        apiKey: "sk-test-key",
+        baseUrl: "https://api.groq.com/openai/v1/chat/completions"
+      });
+
+      await synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.groq.com/openai/v1/chat/completions",
+        expect.any(Object)
+      );
+    });
+
+    it("sends OpenAI-format body with the configured model", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "Model summary" } }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "openai-compatible",
+        apiKey: "sk-test-key",
+        baseUrl: "https://api.mistral.ai/v1",
+        model: "mistral-large-latest"
+      });
+
+      await synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")]);
+
+      const callArg = mockFetch.mock.calls[0][1];
+      const body = JSON.parse(callArg.body);
+      expect(body.model).toBe("mistral-large-latest");
+      expect(body.temperature).toBe(0.2);
+      expect(body.messages).toBeDefined();
+    });
+
+    it("uses default model gpt-4.1-mini when model is empty", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "Default model" } }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "openai-compatible",
+        apiKey: "sk-test-key",
+        baseUrl: "https://api.groq.com/openai/v1",
+        model: ""
+      });
+
+      await synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")]);
+
+      const callArg = mockFetch.mock.calls[0][1];
+      const body = JSON.parse(callArg.body);
+      expect(body.model).toBe("gpt-4.1-mini");
+    });
+
+    it("throws an error when the response is not OK", async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized"
+      });
+
+      const config = makeConfig({
+        provider: "openai-compatible",
+        apiKey: "sk-test-key",
+        baseUrl: "https://api.groq.com/openai/v1"
+      });
+
+      await expect(
+        synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")])
+      ).rejects.toThrow("OpenAI synthesis failed with status 401");
+    });
+
+    it("passes an AbortSignal signal to the fetch call", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "summary" } }]
+        })
+      });
+
+      const config = makeConfig({
+        provider: "openai-compatible",
+        apiKey: "sk-test-key",
+        baseUrl: "https://api.groq.com/openai/v1",
+        aiTimeoutMs: 15000
+      });
+
+      await synthesizeSummary(config, makeAssessment(), [makeFile("test.ts")]);
+
+      const callArg = mockFetch.mock.calls[0][1];
+      expect(callArg.signal).toBeInstanceOf(AbortSignal);
+      expect(callArg.signal.aborted).toBe(false);
     });
   });
 

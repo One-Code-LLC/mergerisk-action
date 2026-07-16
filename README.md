@@ -45,6 +45,8 @@ jobs:
 | `max-patch-lines` | no | `1200` | Maximum patch lines sent to AI synthesis. |
 | `comment-mode` | no | `update` | `update` or `new`. |
 | `risk-profile-path` | no | empty | Optional YAML file for custom path patterns. |
+| `test-review-mode` | no | `auto` | `auto`, `policy`, or `agent`. `auto` uses an agent only when a provider is configured. |
+| `test-policy-path` | no | empty | Optional YAML file controlling deterministic test-review decisions. |
 | `ai-timeout-ms` | no | `30000` | Request timeout in ms for AI provider calls. |
 
 ## Outputs
@@ -63,7 +65,7 @@ based on changed file types and diff size:
 - **Medium path matches** (API, CI/CD, config) — each adds 2 points.
 - **Dependency lockfile changes** — adds 3 points.
 - **Broad changes** (20+ files or 500+ lines) — adds 3 points.
-- **Missing test evidence** — adds 2 points.
+- **Required test changes without test evidence** — adds 2 points.
 
 | Score | Risk Level |
 | ---: | --- |
@@ -74,6 +76,42 @@ based on changed file types and diff size:
 
 AI synthesis is optional. When enabled, it summarizes findings but **cannot reduce**
 the deterministic risk level.
+
+## Test Review
+
+MergeRisk separates the question “did a test file change?” from “were test changes
+required?” The report shows one of three decisions: required, not required, or
+inconclusive. Only a high-confidence `required` decision with no changed test
+evidence adds the test-risk score.
+
+The default `auto` mode uses the agent when an AI provider is configured; otherwise
+it applies the deterministic policy. The built-in policy requires test evidence for
+new source files, but not for modifications to existing source files. This avoids
+penalizing routine API refactors that do not change behavior.
+
+Use `test-review-mode: policy` to always use deterministic rules, or
+`test-review-mode: agent` to require the configured provider. If an agent review
+fails in `auto` or `agent` mode, MergeRisk warns and falls back to policy review.
+
+An optional policy file makes the deterministic route repository-specific:
+
+```yaml
+test-patterns:
+  - "**/*.test.*"
+  - "**/*.spec.*"
+  - "tests/**"
+source-patterns:
+  - "src/**/*.{ts,tsx}"
+exempt-patterns:
+  - "docs/**"
+  - "**/*.generated.*"
+require-tests-for:
+  added-source-files: true
+  modified-source-files: false
+```
+
+The agent judges whether the patch likely requires a test *change*; it does not
+claim to prove coverage is adequate.
 
 ## AI Providers
 

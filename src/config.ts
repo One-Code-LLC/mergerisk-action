@@ -4,6 +4,8 @@ export type Provider = "none" | "openai" | "openai-compatible" | "anthropic";
 
 export type CommentMode = "update" | "new";
 
+export type TestReviewMode = "auto" | "policy" | "agent";
+
 export interface ActionConfig {
   githubToken: string;
   provider: Provider;
@@ -14,6 +16,8 @@ export interface ActionConfig {
   maxPatchLines: number;
   commentMode: CommentMode;
   riskProfilePath: string;
+  testReviewMode: TestReviewMode;
+  testPolicyPath: string;
   aiTimeoutMs: number;
 }
 
@@ -22,6 +26,7 @@ type RawInputs = Record<string, string>;
 const providers: Provider[] = ["none", "openai", "openai-compatible", "anthropic"];
 const failOnRiskValues: Array<RiskLevel | "none"> = ["none", "medium", "high", "critical"];
 const commentModes: CommentMode[] = ["update", "new"];
+const testReviewModes: TestReviewMode[] = ["auto", "policy", "agent"];
 
 function pickProvider(value: string): Provider {
   const normalized = value.trim().toLowerCase() || "none";
@@ -45,6 +50,14 @@ function pickCommentMode(value: string): CommentMode {
     throw new Error(`Unsupported comment-mode value: ${value}`);
   }
   return normalized as CommentMode;
+}
+
+function pickTestReviewMode(value: string): TestReviewMode {
+  const normalized = value.trim().toLowerCase() || "auto";
+  if (!testReviewModes.includes(normalized as TestReviewMode)) {
+    throw new Error(`Unsupported test-review-mode: ${value}`);
+  }
+  return normalized as TestReviewMode;
 }
 
 function pickMaxPatchLines(value: string): number {
@@ -99,6 +112,10 @@ export function parseConfigFromInputs(inputs: RawInputs): ActionConfig {
   if (provider !== "none" && !apiKey) {
     throw new Error(`api-key is required when provider is ${provider}`);
   }
+  const testReviewMode = pickTestReviewMode(inputs["test-review-mode"] ?? "");
+  if (testReviewMode === "agent" && provider === "none") {
+    throw new Error("provider must be configured when test-review-mode is agent");
+  }
 
   return {
     githubToken,
@@ -110,6 +127,8 @@ export function parseConfigFromInputs(inputs: RawInputs): ActionConfig {
     maxPatchLines: pickMaxPatchLines(inputs["max-patch-lines"] ?? ""),
     commentMode: pickCommentMode(inputs["comment-mode"] ?? ""),
     riskProfilePath: inputs["risk-profile-path"]?.trim() ?? "",
+    testReviewMode,
+    testPolicyPath: inputs["test-policy-path"]?.trim() ?? "",
     aiTimeoutMs: pickAiTimeoutMs(inputs["ai-timeout-ms"] ?? ""),
   };
 }

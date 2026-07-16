@@ -41,6 +41,14 @@ inputs:
     description: "Optional path to a custom YAML risk profile."
     required: false
     default: ""
+  test-review-mode:
+    description: "How test impact is decided: auto, policy, or agent. Auto uses agent when a provider is configured."
+    required: false
+    default: "auto"
+  test-policy-path:
+    description: "Optional path to a YAML policy for deterministic test-review decisions."
+    required: false
+    default: ""
   ai-timeout-ms:
     description: "Request timeout in milliseconds for AI provider calls."
     required: false

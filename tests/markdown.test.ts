@@ -25,6 +25,14 @@ function makeAssessment(overrides: Partial<RiskAssessment> = {}): RiskAssessment
     ],
     reviewerFocus: ["src/auth/session.ts"],
     testEvidenceFound: false,
+    testReview: {
+      mode: "policy",
+      decision: "required",
+      confidence: "high",
+      reason: "Test fixture",
+      affectedFiles: ["src/auth/session.ts"],
+      testEvidenceFound: false,
+    },
     filesChanged: 2,
     totalAdditions: 40,
     totalDeletions: 12,
@@ -50,6 +58,16 @@ describe("renderReport", () => {
     expect(markdown).toContain(
       "**Merge guidance:** Senior review recommended before merge.",
     );
+  });
+
+  it("renders the structured test-review decision", () => {
+    const markdown = renderReport(makeAssessment());
+
+    expect(markdown).toContain("### Test Review");
+    expect(markdown).toContain("**Mode:** policy");
+    expect(markdown).toContain("**Decision:** Test changes required");
+    expect(markdown).toContain("**Reason:** `Test fixture`");
+    expect(markdown).toContain("`src/auth/session.ts`");
   });
 
   it("includes a Risk Signals table", () => {

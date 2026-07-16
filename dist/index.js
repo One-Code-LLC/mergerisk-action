@@ -45280,6 +45280,7 @@ function getOctokit(token, options, ...additionalPlugins) {
 const providers = ["none", "openai", "openai-compatible", "anthropic"];
 const failOnRiskValues = ["none", "medium", "high", "critical"];
 const commentModes = ["update", "new"];
+const testReviewModes = ["auto", "policy", "agent"];
 function pickProvider(value) {
     const normalized = value.trim().toLowerCase() || "none";
     if (!providers.includes(normalized)) {
@@ -45298,6 +45299,13 @@ function pickCommentMode(value) {
     const normalized = value.trim().toLowerCase() || "update";
     if (!commentModes.includes(normalized)) {
         throw new Error(`Unsupported comment-mode value: ${value}`);
+    }
+    return normalized;
+}
+function pickTestReviewMode(value) {
+    const normalized = value.trim().toLowerCase() || "auto";
+    if (!testReviewModes.includes(normalized)) {
+        throw new Error(`Unsupported test-review-mode: ${value}`);
     }
     return normalized;
 }
@@ -45350,6 +45358,10 @@ function parseConfigFromInputs(inputs) {
     if (provider !== "none" && !apiKey) {
         throw new Error(`api-key is required when provider is ${provider}`);
     }
+    const testReviewMode = pickTestReviewMode(inputs["test-review-mode"] ?? "");
+    if (testReviewMode === "agent" && provider === "none") {
+        throw new Error("provider must be configured when test-review-mode is agent");
+    }
     return {
         githubToken,
         provider,
@@ -45360,6 +45372,8 @@ function parseConfigFromInputs(inputs) {
         maxPatchLines: pickMaxPatchLines(inputs["max-patch-lines"] ?? ""),
         commentMode: pickCommentMode(inputs["comment-mode"] ?? ""),
         riskProfilePath: inputs["risk-profile-path"]?.trim() ?? "",
+        testReviewMode,
+        testPolicyPath: inputs["test-policy-path"]?.trim() ?? "",
         aiTimeoutMs: pickAiTimeoutMs(inputs["ai-timeout-ms"] ?? ""),
     };
 }
@@ -45459,6 +45473,108 @@ async function synthesizeSummary(config, assessment, files) {
     return "";
 }
 
+;// CONCATENATED MODULE: ./src/ai/test-review.ts
+const test_review_OPENAI_BASE = "https://api.openai.com/v1";
+const test_review_CHAT_COMPLETIONS_PATH = "/chat/completions";
+const decisions = new Set(["required", "not_required", "inconclusive"]);
+const confidences = new Set(["high", "medium", "low"]);
+function test_review_truncatePatch(files, maxPatchLines) {
+    const lines = [];
+    for (const file of files) {
+        if (lines.length >= maxPatchLines)
+            break;
+        lines.push(`FILE: ${file.filename} (${file.status})`);
+        lines.push(...file.patch.split("\n").slice(0, Math.max(0, maxPatchLines - lines.length - 1)));
+    }
+    return lines.slice(0, maxPatchLines).join("\n");
+}
+function test_review_promptFor(files, maxPatchLines) {
+    return `Assess whether this pull request requires tests to be added or updated.
+Decide based on whether changed implementation alters observable behavior, a public contract, or error handling.
+Do not require tests for comments, formatting, documentation, equivalent refactors, generated files, or dependency metadata.
+Do not infer coverage from tests that are not in the pull request. This is a test-change decision, not a claim that the repository's test suite is adequate.
+
+Return only JSON with this exact shape:
+{"decision":"required|not_required|inconclusive","confidence":"high|medium|low","reason":"short explanation","affectedFiles":["changed/file.ts"]}
+
+Changed files and patches:
+${test_review_truncatePatch(files, maxPatchLines)}`;
+}
+function test_review_buildOpenAIEndpoint(baseUrl) {
+    const trimmed = baseUrl.replace(/\/+$/, "");
+    return trimmed.endsWith(test_review_CHAT_COMPLETIONS_PATH) ? trimmed : `${trimmed}${test_review_CHAT_COMPLETIONS_PATH}`;
+}
+function parseReview(content, files) {
+    const cleaned = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    let parsed;
+    try {
+        parsed = JSON.parse(cleaned);
+    }
+    catch {
+        throw new Error("Test-review agent returned invalid JSON");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Test-review agent returned an invalid response");
+    }
+    const result = parsed;
+    if (!decisions.has(result.decision) || !confidences.has(result.confidence) || typeof result.reason !== "string" || result.reason.trim().length === 0 || !Array.isArray(result.affectedFiles) || !result.affectedFiles.every((file) => typeof file === "string")) {
+        throw new Error("Test-review agent returned an invalid schema");
+    }
+    const changedFilenames = new Set(files.map((file) => file.filename));
+    return {
+        mode: "agent",
+        decision: result.decision,
+        confidence: result.confidence,
+        reason: result.reason.trim().slice(0, 500),
+        affectedFiles: result.affectedFiles.filter((file) => changedFilenames.has(file)).slice(0, 10),
+        testEvidenceFound: false
+    };
+}
+async function requestOpenAI(config, files, baseUrl) {
+    const response = await fetch(test_review_buildOpenAIEndpoint(baseUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
+        body: JSON.stringify({
+            model: config.model || "gpt-4.1-mini",
+            messages: [{ role: "user", content: test_review_promptFor(files, config.maxPatchLines) }],
+            temperature: 0
+        }),
+        signal: AbortSignal.timeout(config.aiTimeoutMs)
+    });
+    if (!response.ok)
+        throw new Error(`Test-review agent failed with status ${response.status}`);
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content?.trim() ?? "";
+}
+async function requestAnthropic(config, files) {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            "x-api-key": config.apiKey,
+            "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+            model: config.model || "claude-3-5-haiku-latest",
+            max_tokens: 300,
+            messages: [{ role: "user", content: test_review_promptFor(files, config.maxPatchLines) }]
+        }),
+        signal: AbortSignal.timeout(config.aiTimeoutMs)
+    });
+    if (!response.ok)
+        throw new Error(`Test-review agent failed with status ${response.status}`);
+    const data = await response.json();
+    return data.content?.find((part) => part.type === "text")?.text?.trim() ?? "";
+}
+async function reviewTestsWithAgent(config, files) {
+    if (config.provider === "none")
+        throw new Error("Test-review agent requires a configured provider");
+    const content = config.provider === "anthropic"
+        ? await requestAnthropic(config, files)
+        : await requestOpenAI(config, files, config.provider === "openai-compatible" ? config.baseUrl : test_review_OPENAI_BASE);
+    return parseReview(content, files);
+}
+
 ;// CONCATENATED MODULE: ./src/report/markdown.ts
 const reportMarker = "<!-- mergerisk-report -->";
 /**
@@ -45503,6 +45619,13 @@ function checklistFor(assessment) {
     }
     return Array.from(items);
 }
+function testReviewLabel(decision) {
+    if (decision === "required")
+        return "Test changes required";
+    if (decision === "not_required")
+        return "Test changes not required";
+    return "Test impact inconclusive";
+}
 function renderReport(assessment, synthesizedSummary = "") {
     const checklist = checklistFor(assessment)
         .map((item) => `- ${item}`)
@@ -45522,6 +45645,13 @@ ${assessment.signals.map((signal) => `- ${signal.message}.`).join("\n")}
 
 ### Reviewer Focus
 ${bulletList(assessment.reviewerFocus)}
+
+### Test Review
+**Mode:** ${assessment.testReview.mode}<br>
+**Decision:** ${testReviewLabel(assessment.testReview.decision)}<br>
+**Confidence:** ${assessment.testReview.confidence}<br>
+**Reason:** ${code(assessment.testReview.reason)}
+${assessment.testReview.affectedFiles.length > 0 ? `**Affected files:** ${assessment.testReview.affectedFiles.map(code).join(", ")}\n` : ""}
 
 ### Risk Signals
 | Signal | Severity | Evidence |
@@ -48129,6 +48259,17 @@ const defaultRiskRules = [
         patterns: ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "tests/**"]
     }
 ];
+const defaultTestPolicy = {
+    testPatterns: ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "tests/**"],
+    sourcePatterns: [
+        "**/*.{js,jsx,mjs,cjs,ts,tsx,py,rb,go,java,kt,cs,php,rs,swift,scala,sh}"
+    ],
+    exemptPatterns: ["docs/**", "**/*.md", "**/*.d.ts", "**/*.generated.*"],
+    requireTestsFor: {
+        addedSourceFiles: true,
+        modifiedSourceFiles: false
+    }
+};
 
 ;// CONCATENATED MODULE: ./src/risk/classify.ts
 
@@ -48159,7 +48300,49 @@ function classifyFiles(files, rules = defaultRiskRules) {
     return signals;
 }
 
+;// CONCATENATED MODULE: ./src/risk/test-review.ts
+
+
+function matches(filename, patterns) {
+    return patterns.some((pattern) => minimatch(filename, pattern, { dot: true, matchBase: true }));
+}
+function isSourceFile(file, policy) {
+    return matches(file.filename, policy.sourcePatterns)
+        && !matches(file.filename, policy.testPatterns)
+        && !matches(file.filename, policy.exemptPatterns);
+}
+function reviewTestsWithPolicy(files, policy = defaultTestPolicy) {
+    const testEvidenceFound = files.some((file) => matches(file.filename, policy.testPatterns));
+    const affectedFiles = files.filter((file) => {
+        if (!isSourceFile(file, policy))
+            return false;
+        if (file.status === "added")
+            return policy.requireTestsFor.addedSourceFiles;
+        return policy.requireTestsFor.modifiedSourceFiles && (file.status === "modified" || file.status === "renamed");
+    }).map((file) => file.filename);
+    if (affectedFiles.length > 0) {
+        const verb = policy.requireTestsFor.modifiedSourceFiles ? "source files changed" : "new source files added";
+        return {
+            mode: "policy",
+            decision: "required",
+            confidence: "high",
+            reason: `The configured policy requires test changes when ${verb}.`,
+            affectedFiles,
+            testEvidenceFound
+        };
+    }
+    return {
+        mode: "policy",
+        decision: "not_required",
+        confidence: "high",
+        reason: "The configured policy does not require test changes for these files.",
+        affectedFiles: [],
+        testEvidenceFound
+    };
+}
+
 ;// CONCATENATED MODULE: ./src/risk/score.ts
+
 
 const riskRank = {
     low: 0,
@@ -48209,17 +48392,19 @@ function broadChangeSignals(files) {
     }
     return signals;
 }
-function missingTestsSignal(classifiedSignals) {
-    const hasTests = classifiedSignals.some((s) => s.category === "tests");
-    if (hasTests)
+function missingTestsSignal(testReview) {
+    // Lower-confidence agent conclusions remain visible in the report but advisory.
+    if (testReview.decision !== "required"
+        || testReview.confidence !== "high"
+        || testReview.testEvidenceFound)
         return [];
     return [
         {
             category: "missing_tests",
             severity: "medium",
             points: 2,
-            evidence: ["No changed files matched default test patterns"],
-            message: "No test evidence found in this pull request"
+            evidence: testReview.affectedFiles.length > 0 ? testReview.affectedFiles : [testReview.reason],
+            message: "Test changes are required but no test evidence was found"
         }
     ];
 }
@@ -48229,7 +48414,7 @@ function normalizeSignal(signals, category, targetPoints) {
         signal.points = targetPoints;
     }
 }
-function assessRisk(files, rules) {
+function assessRisk(files, rules, testReview = reviewTestsWithPolicy(files)) {
     const classifiedSignals = classifyFiles(files, rules);
     const signals = [...classifiedSignals];
     // Normalize dependency and CI/CD signals to their intended total points
@@ -48237,8 +48422,8 @@ function assessRisk(files, rules) {
     normalizeSignal(signals, "ci_cd", 3);
     // Add broad-change and large-diff signals
     signals.push(...broadChangeSignals(files));
-    // Add missing-tests signal if no tests category signal exists
-    signals.push(...missingTestsSignal(classifiedSignals));
+    // Add a missing-tests signal only when the selected review path requires tests.
+    signals.push(...missingTestsSignal(testReview));
     const score = signals.reduce((sum, s) => sum + s.points, 0);
     const level = levelFromScore(score);
     const reviewerFocus = signals
@@ -48252,7 +48437,8 @@ function assessRisk(files, rules) {
         guidance: guidanceFor(level),
         signals,
         reviewerFocus,
-        testEvidenceFound: classifiedSignals.some((s) => s.category === "tests"),
+        testEvidenceFound: testReview.testEvidenceFound,
+        testReview,
         filesChanged: files.length,
         totalAdditions: files.reduce((sum, f) => sum + f.additions, 0),
         totalDeletions: files.reduce((sum, f) => sum + f.deletions, 0)
@@ -48338,7 +48524,77 @@ async function loadRiskRules(profilePath) {
     return rules;
 }
 
+;// CONCATENATED MODULE: ./src/risk/test-policy.ts
+
+
+
+function copyDefaultPolicy() {
+    return {
+        testPatterns: [...defaultTestPolicy.testPatterns],
+        sourcePatterns: [...defaultTestPolicy.sourcePatterns],
+        exemptPatterns: [...defaultTestPolicy.exemptPatterns],
+        requireTestsFor: { ...defaultTestPolicy.requireTestsFor }
+    };
+}
+function isStringArray(value) {
+    return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item.length > 0);
+}
+function parsePolicy(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Invalid test policy: YAML must be an object");
+    }
+    const policy = value;
+    const required = policy["require-tests-for"];
+    if (!required || typeof required !== "object" || Array.isArray(required)) {
+        throw new Error("Invalid test policy: require-tests-for must be an object");
+    }
+    const requirements = required;
+    if (!isStringArray(policy["test-patterns"])) {
+        throw new Error("Invalid test policy: test-patterns must be a non-empty list of strings");
+    }
+    if (!isStringArray(policy["source-patterns"])) {
+        throw new Error("Invalid test policy: source-patterns must be a non-empty list of strings");
+    }
+    if (!Array.isArray(policy["exempt-patterns"]) || !policy["exempt-patterns"].every((item) => typeof item === "string" && item.length > 0)) {
+        throw new Error("Invalid test policy: exempt-patterns must be a list of strings");
+    }
+    if (typeof requirements["added-source-files"] !== "boolean" || typeof requirements["modified-source-files"] !== "boolean") {
+        throw new Error("Invalid test policy: require-tests-for values must be booleans");
+    }
+    return {
+        testPatterns: policy["test-patterns"],
+        sourcePatterns: policy["source-patterns"],
+        exemptPatterns: policy["exempt-patterns"],
+        requireTestsFor: {
+            addedSourceFiles: requirements["added-source-files"],
+            modifiedSourceFiles: requirements["modified-source-files"]
+        }
+    };
+}
+async function loadTestPolicy(policyPath) {
+    if (!policyPath.trim())
+        return copyDefaultPolicy();
+    let raw;
+    try {
+        raw = await (0,promises_namespaceObject.readFile)(policyPath, "utf-8");
+    }
+    catch (error) {
+        throw new Error(`Failed to read test policy at "${policyPath}": ${error instanceof Error ? error.message : String(error)}`);
+    }
+    let parsed;
+    try {
+        parsed = (0,yaml_dist/* parse */.qg)(raw);
+    }
+    catch {
+        throw new Error("Invalid test policy: could not parse YAML");
+    }
+    return parsePolicy(parsed);
+}
+
 ;// CONCATENATED MODULE: ./src/main.ts
+
+
+
 
 
 
@@ -48376,6 +48632,8 @@ async function run() {
             "max-patch-lines": core.getInput("max-patch-lines"),
             "comment-mode": core.getInput("comment-mode"),
             "risk-profile-path": core.getInput("risk-profile-path"),
+            "test-review-mode": core.getInput("test-review-mode"),
+            "test-policy-path": core.getInput("test-policy-path"),
             "ai-timeout-ms": core.getInput("ai-timeout-ms"),
         });
         if (config.apiKey) {
@@ -48386,8 +48644,22 @@ async function run() {
         const repo = github_context.repo.repo;
         const pullNumber = pullRequest.number;
         const rules = await loadRiskRules(config.riskProfilePath);
+        const testPolicy = await loadTestPolicy(config.testPolicyPath);
         const files = await listPullRequestFiles(octokit, { owner, repo, pullNumber });
-        const assessment = assessRisk(files, rules);
+        const policyTestReview = reviewTestsWithPolicy(files, testPolicy);
+        let testReview = policyTestReview;
+        if (config.testReviewMode === "agent" || (config.testReviewMode === "auto" && config.provider !== "none")) {
+            try {
+                testReview = {
+                    ...(await reviewTestsWithAgent(config, files)),
+                    testEvidenceFound: policyTestReview.testEvidenceFound
+                };
+            }
+            catch (err) {
+                core.warning(`Agent test review skipped; using policy review: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+        const assessment = assessRisk(files, rules, testReview);
         let summary = "";
         try {
             summary = await synthesizeSummary(config, assessment, files);

@@ -2,11 +2,14 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { parseConfigFromInputs } from "./config.js";
 import { synthesizeSummary } from "./ai/synthesize.js";
+import { reviewTestsWithAgent } from "./ai/test-review.js";
 import { upsertReportComment } from "./github/comment.js";
 import { listPullRequestFiles } from "./github/pull-request.js";
 import { renderReport } from "./report/markdown.js";
 import { assessRisk } from "./risk/score.js";
 import { loadRiskRules } from "./risk/profile.js";
+import { loadTestPolicy } from "./risk/test-policy.js";
+import { reviewTestsWithPolicy } from "./risk/test-review.js";
 import type { RiskLevel } from "./types.js";
 
 const rank: Record<RiskLevel, number> = {
@@ -42,6 +45,8 @@ export async function run(): Promise<void> {
       "max-patch-lines": core.getInput("max-patch-lines"),
       "comment-mode": core.getInput("comment-mode"),
       "risk-profile-path": core.getInput("risk-profile-path"),
+      "test-review-mode": core.getInput("test-review-mode"),
+      "test-policy-path": core.getInput("test-policy-path"),
       "ai-timeout-ms": core.getInput("ai-timeout-ms"),
     });
 
@@ -55,8 +60,21 @@ export async function run(): Promise<void> {
     const pullNumber = pullRequest.number;
 
     const rules = await loadRiskRules(config.riskProfilePath);
+    const testPolicy = await loadTestPolicy(config.testPolicyPath);
     const files = await listPullRequestFiles(octokit, { owner, repo, pullNumber });
-    const assessment = assessRisk(files, rules);
+    const policyTestReview = reviewTestsWithPolicy(files, testPolicy);
+    let testReview = policyTestReview;
+    if (config.testReviewMode === "agent" || (config.testReviewMode === "auto" && config.provider !== "none")) {
+      try {
+        testReview = {
+          ...(await reviewTestsWithAgent(config, files)),
+          testEvidenceFound: policyTestReview.testEvidenceFound
+        };
+      } catch (err) {
+        core.warning(`Agent test review skipped; using policy review: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    const assessment = assessRisk(files, rules, testReview);
 
     let summary = "";
     try {

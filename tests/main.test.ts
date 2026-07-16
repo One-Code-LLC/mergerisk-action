@@ -35,6 +35,14 @@ vi.mock("../src/risk/profile.js", () => ({
   loadRiskRules: vi.fn(),
 }));
 
+vi.mock("../src/risk/test-policy.js", () => ({
+  loadTestPolicy: vi.fn(),
+}));
+
+vi.mock("../src/risk/test-review.js", () => ({
+  reviewTestsWithPolicy: vi.fn(),
+}));
+
 vi.mock("../src/github/pull-request.js", () => ({
   listPullRequestFiles: vi.fn(),
 }));
@@ -45,6 +53,10 @@ vi.mock("../src/risk/score.js", () => ({
 
 vi.mock("../src/ai/synthesize.js", () => ({
   synthesizeSummary: vi.fn(),
+}));
+
+vi.mock("../src/ai/test-review.js", () => ({
+  reviewTestsWithAgent: vi.fn(),
 }));
 
 vi.mock("../src/report/markdown.js", () => ({
@@ -63,9 +75,12 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { parseConfigFromInputs } from "../src/config.js";
 import { loadRiskRules } from "../src/risk/profile.js";
+import { loadTestPolicy } from "../src/risk/test-policy.js";
+import { reviewTestsWithPolicy } from "../src/risk/test-review.js";
 import { listPullRequestFiles } from "../src/github/pull-request.js";
 import { assessRisk } from "../src/risk/score.js";
 import { synthesizeSummary } from "../src/ai/synthesize.js";
+import { reviewTestsWithAgent } from "../src/ai/test-review.js";
 import { renderReport } from "../src/report/markdown.js";
 import { upsertReportComment } from "../src/github/comment.js";
 import { run } from "../src/main.js";
@@ -86,6 +101,8 @@ function defaultConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     maxPatchLines: 1200,
     commentMode: "update",
     riskProfilePath: "",
+    testReviewMode: "auto",
+    testPolicyPath: "",
     aiTimeoutMs: 30000,
     ...overrides,
   };
@@ -99,6 +116,14 @@ function defaultAssessment(overrides: Partial<RiskAssessment> = {}): RiskAssessm
     signals: [],
     reviewerFocus: [],
     testEvidenceFound: false,
+    testReview: {
+      mode: "policy",
+      decision: "not_required",
+      confidence: "high",
+      reason: "Test fixture",
+      affectedFiles: [],
+      testEvidenceFound: false,
+    },
     filesChanged: 0,
     totalAdditions: 0,
     totalDeletions: 0,
@@ -127,6 +152,20 @@ describe("run", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockContext.payload = {};
+    vi.mocked(loadTestPolicy).mockResolvedValue({
+      testPatterns: ["tests/**"],
+      sourcePatterns: ["src/**"],
+      exemptPatterns: [],
+      requireTestsFor: { addedSourceFiles: true, modifiedSourceFiles: false },
+    });
+    vi.mocked(reviewTestsWithPolicy).mockReturnValue({
+      mode: "policy",
+      decision: "not_required",
+      confidence: "high",
+      reason: "Policy fixture",
+      affectedFiles: [],
+      testEvidenceFound: false,
+    });
   });
 
   /* ---------- Test 1: non-PR event ---------- */
@@ -142,6 +181,7 @@ describe("run", () => {
     expect(core.setFailed).not.toHaveBeenCalled();
     expect(parseConfigFromInputs).not.toHaveBeenCalled();
     expect(loadRiskRules).not.toHaveBeenCalled();
+    expect(loadTestPolicy).not.toHaveBeenCalled();
     expect(listPullRequestFiles).not.toHaveBeenCalled();
     expect(assessRisk).not.toHaveBeenCalled();
     expect(synthesizeSummary).not.toHaveBeenCalled();
@@ -169,11 +209,16 @@ describe("run", () => {
 
     expect(parseConfigFromInputs).toHaveBeenCalled();
     expect(loadRiskRules).toHaveBeenCalledWith(config.riskProfilePath);
+    expect(loadTestPolicy).toHaveBeenCalledWith(config.testPolicyPath);
     expect(listPullRequestFiles).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ owner: "acme", repo: "app", pullNumber: 42 }),
     );
-    expect(assessRisk).toHaveBeenCalledWith(files, []);
+    expect(assessRisk).toHaveBeenCalledWith(
+      files,
+      [],
+      expect.objectContaining({ mode: "policy", decision: "not_required" }),
+    );
     expect(synthesizeSummary).toHaveBeenCalledWith(config, assessment, files);
     expect(renderReport).toHaveBeenCalledWith(assessment, "");
     expect(upsertReportComment).toHaveBeenCalledWith(
@@ -189,6 +234,58 @@ describe("run", () => {
     expect(core.setOutput).toHaveBeenCalledWith("risk-level", "medium");
     expect(core.setOutput).toHaveBeenCalledWith("risk-score", "5");
     expect(core.setFailed).not.toHaveBeenCalled();
+  });
+
+  it("uses an agent review in auto mode when a provider is configured", async () => {
+    const config = defaultConfig({ provider: "openai", apiKey: "sk-test-key" });
+    const assessment = defaultAssessment();
+    const files = defaultFiles();
+    const agentReview = {
+      mode: "agent" as const,
+      decision: "required" as const,
+      confidence: "high" as const,
+      reason: "Adds behavior.",
+      affectedFiles: ["src/ui/button.tsx"],
+      testEvidenceFound: false,
+    };
+
+    mockContext.payload = { pull_request: { number: 42 } };
+    vi.mocked(parseConfigFromInputs).mockReturnValue(config);
+    vi.mocked(loadRiskRules).mockResolvedValue([]);
+    vi.mocked(listPullRequestFiles).mockResolvedValue(files);
+    vi.mocked(reviewTestsWithAgent).mockResolvedValue(agentReview);
+    vi.mocked(assessRisk).mockReturnValue(assessment);
+    vi.mocked(synthesizeSummary).mockResolvedValue("");
+    vi.mocked(renderReport).mockReturnValue("report");
+
+    await run();
+
+    expect(reviewTestsWithAgent).toHaveBeenCalledWith(config, files);
+    expect(assessRisk).toHaveBeenCalledWith(files, [], agentReview);
+  });
+
+  it("falls back to policy review when the agent review fails", async () => {
+    const config = defaultConfig({ provider: "openai", apiKey: "sk-test-key" });
+    const assessment = defaultAssessment();
+    const files = defaultFiles();
+
+    mockContext.payload = { pull_request: { number: 42 } };
+    vi.mocked(parseConfigFromInputs).mockReturnValue(config);
+    vi.mocked(loadRiskRules).mockResolvedValue([]);
+    vi.mocked(listPullRequestFiles).mockResolvedValue(files);
+    vi.mocked(reviewTestsWithAgent).mockRejectedValue(new Error("invalid JSON"));
+    vi.mocked(assessRisk).mockReturnValue(assessment);
+    vi.mocked(synthesizeSummary).mockResolvedValue("");
+    vi.mocked(renderReport).mockReturnValue("report");
+
+    await run();
+
+    expect(core.warning).toHaveBeenCalledWith("Agent test review skipped; using policy review: invalid JSON");
+    expect(assessRisk).toHaveBeenCalledWith(
+      files,
+      [],
+      expect.objectContaining({ mode: "policy" }),
+    );
   });
 
   /* ---------- Test 3: fail-on-risk: high with high assessment ---------- */

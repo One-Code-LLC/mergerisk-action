@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { assessRisk } from "../src/risk/score.js";
 import type { PullRequestFile, RiskRule } from "../src/types.js";
 
-function file(filename: string, additions = 10, deletions = 2): PullRequestFile {
+function file(filename: string, additions = 10, deletions = 2, status = "modified"): PullRequestFile {
   return {
     filename,
-    status: "modified",
+    status,
     additions,
     deletions,
     changes: additions + deletions,
@@ -26,21 +26,17 @@ describe("assessRisk", () => {
     expect(assessment.guidance).toBe("No unusual merge risk detected.");
   });
 
-  it("marks auth plus database changes with no tests as high risk and includes missing_tests", () => {
+  it("does not require test changes for modified auth and database files under the default policy", () => {
     const assessment = assessRisk([
       file("src/auth/session.ts"),
       file("migrations/20260629_add_roles.sql")
     ]);
 
     expect(assessment.level).toBe("high");
-    expect(assessment.score).toBeGreaterThanOrEqual(7);
+    expect(assessment.score).toBe(8);
     expect(assessment.score).toBeLessThan(12);
-    expect(assessment.signals.map((s) => s.category)).toContain("missing_tests");
-    const missingTests = assessment.signals.find((s) => s.category === "missing_tests");
-    expect(missingTests).toBeDefined();
-    expect(missingTests!.points).toBe(2);
-    expect(missingTests!.severity).toBe("medium");
-    expect(missingTests!.evidence).toEqual(["No changed files matched default test patterns"]);
+    expect(assessment.signals.map((s) => s.category)).not.toContain("missing_tests");
+    expect(assessment.testReview.decision).toBe("not_required");
   });
 
   it("adds broad_change signal when more than 20 files are changed", () => {
@@ -70,8 +66,7 @@ describe("assessRisk", () => {
     const depSignal = assessment.signals.find((s) => s.category === "dependencies");
     expect(depSignal).toBeDefined();
     expect(depSignal!.points).toBe(3);
-    // Total includes missing_tests (2) + dependency (3) = 5
-    expect(assessment.score).toBe(5);
+    expect(assessment.score).toBe(3);
   });
 
   it("normalizes CI/CD workflow risk to 3 total points", () => {
@@ -80,13 +75,12 @@ describe("assessRisk", () => {
     const ciCdSignal = assessment.signals.find((s) => s.category === "ci_cd");
     expect(ciCdSignal).toBeDefined();
     expect(ciCdSignal!.points).toBe(3);
-    // Total includes missing_tests (2) + ci_cd (3) = 5
-    expect(assessment.score).toBe(5);
+    expect(assessment.score).toBe(3);
   });
 
   it("scores critical when combination reaches 12 or more points", () => {
     // auth (4) + database (4) + ci_cd (3 normalized) + dependencies (3 normalized)
-    // + broad_change (3) + missing_tests (2) = 19
+    // + broad_change (3) = 17
     const files = Array.from({ length: 25 }, (_, i) => {
       if (i < 10) return file(`src/auth/file-${i}.ts`, 30, 30);
       if (i < 20) return file(`src/api/route-${i}.ts`, 30, 30);
@@ -137,11 +131,48 @@ describe("assessRisk", () => {
     expect(customSignal!.evidence).toContain("src/custom/something.ts");
   });
 
-  it("sets testEvidenceFound to false when no test files are changed", () => {
+  it("records missing test evidence without penalizing a modified existing source file", () => {
     const assessment = assessRisk([file("src/app.ts")]);
 
     expect(assessment.testEvidenceFound).toBe(false);
+    expect(assessment.signals.map((s) => s.category)).not.toContain("missing_tests");
+  });
+
+  it("requires test evidence for an added source file", () => {
+    const assessment = assessRisk([file("src/api/new-route.ts", 10, 0, "added")]);
+
+    expect(assessment.testReview.decision).toBe("required");
+    expect(assessment.testReview.affectedFiles).toEqual(["src/api/new-route.ts"]);
     expect(assessment.signals.map((s) => s.category)).toContain("missing_tests");
+  });
+
+  it("accepts a changed test file as evidence when a new source file requires tests", () => {
+    const assessment = assessRisk([
+      file("src/api/new-route.ts", 10, 0, "added"),
+      file("tests/new-route.test.ts", 10, 0, "added")
+    ]);
+
+    expect(assessment.testReview.decision).toBe("required");
+    expect(assessment.testEvidenceFound).toBe(true);
+    expect(assessment.signals.map((s) => s.category)).not.toContain("missing_tests");
+  });
+
+  it("keeps a non-high-confidence agent requirement advisory", () => {
+    const assessment = assessRisk(
+      [file("src/api/existing-route.ts")],
+      undefined,
+      {
+        mode: "agent",
+        decision: "required",
+        confidence: "medium",
+        reason: "The patch may alter an endpoint contract.",
+        affectedFiles: ["src/api/existing-route.ts"],
+        testEvidenceFound: false,
+      },
+    );
+
+    expect(assessment.signals.map((s) => s.category)).not.toContain("missing_tests");
+    expect(assessment.testReview.decision).toBe("required");
   });
 
   it("returns aggregate file and diff statistics", () => {

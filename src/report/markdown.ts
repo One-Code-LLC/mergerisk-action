@@ -50,6 +50,12 @@ function checklistFor(assessment: RiskAssessment): string[] {
   return Array.from(items);
 }
 
+function testReviewLabel(decision: RiskAssessment["testReview"]["decision"]): string {
+  if (decision === "required") return "Test changes required";
+  if (decision === "not_required") return "Test changes not required";
+  return "Test impact inconclusive";
+}
+
 export function renderReport(
   assessment: RiskAssessment,
   synthesizedSummary = "",
@@ -73,6 +79,13 @@ ${assessment.signals.map((signal) => `- ${signal.message}.`).join("\n")}
 
 ### Reviewer Focus
 ${bulletList(assessment.reviewerFocus)}
+
+### Test Review
+**Mode:** ${assessment.testReview.mode}<br>
+**Decision:** ${testReviewLabel(assessment.testReview.decision)}<br>
+**Confidence:** ${assessment.testReview.confidence}<br>
+**Reason:** ${code(assessment.testReview.reason)}
+${assessment.testReview.affectedFiles.length > 0 ? `**Affected files:** ${assessment.testReview.affectedFiles.map(code).join(", ")}\n` : ""}
 
 ### Risk Signals
 | Signal | Severity | Evidence |

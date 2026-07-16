@@ -13,6 +13,8 @@ function makeConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     maxPatchLines: 1200,
     commentMode: "update",
     riskProfilePath: "",
+    testReviewMode: "auto",
+    testPolicyPath: "",
     aiTimeoutMs: 30000,
     ...overrides
   };
@@ -26,6 +28,14 @@ function makeAssessment(overrides: Partial<RiskAssessment> = {}): RiskAssessment
     signals: [],
     reviewerFocus: [],
     testEvidenceFound: false,
+    testReview: {
+      mode: "policy",
+      decision: "not_required",
+      confidence: "high",
+      reason: "Test fixture",
+      affectedFiles: [],
+      testEvidenceFound: false,
+    },
     filesChanged: 2,
     totalAdditions: 40,
     totalDeletions: 12,

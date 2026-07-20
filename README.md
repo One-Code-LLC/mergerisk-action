@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
             ref: ${{ github.event.pull_request.base.sha }}
-      - uses: one-code-llc/mergerisk-action@bf26cdf3660bd1c52c811e62d972b2c5ddb1d567 # v0.1.0
+      - uses: one-code-llc/mergerisk-action@928924014718afe14ec38fccf4e7fd7dfed38113 # v0.1.1
         with:
           github-token: ${{ github.token }}
 ```

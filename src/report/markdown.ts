@@ -15,11 +15,6 @@ function code(s: string): string {
   return `\`${s.replace(/`/g, " ").replace(/\|/g, " ").replace(/\r?\n/g, " ")}\``;
 }
 
-function bulletList(items: string[]): string {
-  if (items.length === 0) return "- No specific files identified.";
-  return items.map((item) => `- ${code(item)}`).join("\n");
-}
-
 function signalRow(signal: RiskSignal): string {
   const evidence = signal.evidence.map((item) => code(item)).join(", ");
   return `| ${signal.category} | ${signal.severity} | ${evidence} |`;
@@ -44,7 +39,7 @@ function checklistFor(assessment: RiskAssessment): string[] {
   }
 
   if (items.size === 0) {
-    items.add("Review the changed files and confirm expected behavior.");
+    items.add("Review the changed files for accuracy and intended scope.");
   }
 
   return Array.from(items);
@@ -66,6 +61,16 @@ export function renderReport(
   const summary = synthesizedSummary.trim()
     ? `\n### Summary\n${synthesizedSummary.trim()}\n`
     : "";
+  const riskDetails = assessment.signals.length > 0
+    ? `\n### Why This PR Is Risky\n${assessment.signals
+        .map((signal) => `- ${signal.message}.`)
+        .join("\n")}\n\n### Risk Signals\n| Signal | Severity | Evidence |\n| --- | --- | --- |\n${assessment.signals.map(signalRow).join("\n")}\n`
+    : "";
+  const reviewerFocus = assessment.reviewerFocus.length > 0
+    ? `\n### Reviewer Focus\n${assessment.reviewerFocus
+        .map((item) => `- ${code(item)}`)
+        .join("\n")}\n`
+    : "";
 
   return `${reportMarker}
 ## MergeRisk Report
@@ -73,12 +78,7 @@ export function renderReport(
 **Overall risk:** ${assessment.level}  
 **Score:** ${assessment.score}  
 **Merge guidance:** ${assessment.guidance}
-${summary}
-### Why This PR Is Risky
-${assessment.signals.map((signal) => `- ${signal.message}.`).join("\n")}
-
-### Reviewer Focus
-${bulletList(assessment.reviewerFocus)}
+${summary}${riskDetails}${reviewerFocus}
 
 ### Test Review
 **Mode:** ${assessment.testReview.mode}<br>
@@ -86,11 +86,6 @@ ${bulletList(assessment.reviewerFocus)}
 **Confidence:** ${assessment.testReview.confidence}<br>
 **Reason:** ${code(assessment.testReview.reason)}
 ${assessment.testReview.affectedFiles.length > 0 ? `**Affected files:** ${assessment.testReview.affectedFiles.map(code).join(", ")}\n` : ""}
-
-### Risk Signals
-| Signal | Severity | Evidence |
-| --- | --- | --- |
-${assessment.signals.map(signalRow).join("\n")}
 
 ### Suggested Checklist
 ${checklist}

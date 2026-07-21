@@ -36,7 +36,7 @@ Reviewer focus: ${assessment.reviewerFocus.join(", ")}
 Changed files and truncated patches:
 ${truncatePatch(files, maxPatchLines)}
 
-Return 2-4 bullet points focused on reviewer attention and merge risk.`;
+If there are no signals, keep the summary to 1-2 bullets: state that no elevated merge risk was detected, briefly identify the type of change, and do not invent review concerns, downstream complexity, implementation risks, or a separate reviewer focus. Do not repeat the risk level or score, since the report already shows them. Otherwise, return 2-4 bullets focused on reviewer attention and merge risk.`;
 }
 
 const OPENAI_BASE = "https://api.openai.com/v1";

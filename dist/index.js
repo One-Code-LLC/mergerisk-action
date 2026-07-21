@@ -45404,7 +45404,7 @@ Reviewer focus: ${assessment.reviewerFocus.join(", ")}
 Changed files and truncated patches:
 ${truncatePatch(files, maxPatchLines)}
 
-Return 2-4 bullet points focused on reviewer attention and merge risk.`;
+If there are no signals, keep the summary to 1-2 bullets: state that no elevated merge risk was detected, briefly identify the type of change, and do not invent review concerns, downstream complexity, implementation risks, or a separate reviewer focus. Do not repeat the risk level or score, since the report already shows them. Otherwise, return 2-4 bullets focused on reviewer attention and merge risk.`;
 }
 const OPENAI_BASE = "https://api.openai.com/v1";
 const CHAT_COMPLETIONS_PATH = "/chat/completions";
@@ -45589,11 +45589,6 @@ const reportMarker = "<!-- mergerisk-report -->";
 function code(s) {
     return `\`${s.replace(/`/g, " ").replace(/\|/g, " ").replace(/\r?\n/g, " ")}\``;
 }
-function bulletList(items) {
-    if (items.length === 0)
-        return "- No specific files identified.";
-    return items.map((item) => `- ${code(item)}`).join("\n");
-}
 function signalRow(signal) {
     const evidence = signal.evidence.map((item) => code(item)).join(", ");
     return `| ${signal.category} | ${signal.severity} | ${evidence} |`;
@@ -45615,7 +45610,7 @@ function checklistFor(assessment) {
             items.add("Add tests or identify existing validation evidence.");
     }
     if (items.size === 0) {
-        items.add("Review the changed files and confirm expected behavior.");
+        items.add("Review the changed files for accuracy and intended scope.");
     }
     return Array.from(items);
 }
@@ -45633,18 +45628,23 @@ function renderReport(assessment, synthesizedSummary = "") {
     const summary = synthesizedSummary.trim()
         ? `\n### Summary\n${synthesizedSummary.trim()}\n`
         : "";
+    const riskDetails = assessment.signals.length > 0
+        ? `\n### Why This PR Is Risky\n${assessment.signals
+            .map((signal) => `- ${signal.message}.`)
+            .join("\n")}\n\n### Risk Signals\n| Signal | Severity | Evidence |\n| --- | --- | --- |\n${assessment.signals.map(signalRow).join("\n")}\n`
+        : "";
+    const reviewerFocus = assessment.reviewerFocus.length > 0
+        ? `\n### Reviewer Focus\n${assessment.reviewerFocus
+            .map((item) => `- ${code(item)}`)
+            .join("\n")}\n`
+        : "";
     return `${reportMarker}
 ## MergeRisk Report
 
 **Overall risk:** ${assessment.level}  
 **Score:** ${assessment.score}  
 **Merge guidance:** ${assessment.guidance}
-${summary}
-### Why This PR Is Risky
-${assessment.signals.map((signal) => `- ${signal.message}.`).join("\n")}
-
-### Reviewer Focus
-${bulletList(assessment.reviewerFocus)}
+${summary}${riskDetails}${reviewerFocus}
 
 ### Test Review
 **Mode:** ${assessment.testReview.mode}<br>
@@ -45652,11 +45652,6 @@ ${bulletList(assessment.reviewerFocus)}
 **Confidence:** ${assessment.testReview.confidence}<br>
 **Reason:** ${code(assessment.testReview.reason)}
 ${assessment.testReview.affectedFiles.length > 0 ? `**Affected files:** ${assessment.testReview.affectedFiles.map(code).join(", ")}\n` : ""}
-
-### Risk Signals
-| Signal | Severity | Evidence |
-| --- | --- | --- |
-${assessment.signals.map(signalRow).join("\n")}
 
 ### Suggested Checklist
 ${checklist}

@@ -1,5 +1,6 @@
-import type { PullRequestFile, RiskAssessment, RiskLevel, RiskRule, RiskSignal } from "../types.js";
+import type { PullRequestFile, RiskAssessment, RiskLevel, RiskRule, RiskSignal, TestReview } from "../types.js";
 import { classifyFiles } from "./classify.js";
+import { reviewTestsWithPolicy } from "./test-review.js";
 
 const riskRank: Record<RiskLevel, number> = {
   low: 0,
@@ -50,17 +51,21 @@ function broadChangeSignals(files: PullRequestFile[]): RiskSignal[] {
   return signals;
 }
 
-function missingTestsSignal(classifiedSignals: RiskSignal[]): RiskSignal[] {
-  const hasTests = classifiedSignals.some((s) => s.category === "tests");
-  if (hasTests) return [];
+function missingTestsSignal(testReview: TestReview): RiskSignal[] {
+  // Lower-confidence agent conclusions remain visible in the report but advisory.
+  if (
+    testReview.decision !== "required"
+    || testReview.confidence !== "high"
+    || testReview.testEvidenceFound
+  ) return [];
 
   return [
     {
       category: "missing_tests",
       severity: "medium",
       points: 2,
-      evidence: ["No changed files matched default test patterns"],
-      message: "No test evidence found in this pull request"
+      evidence: testReview.affectedFiles.length > 0 ? testReview.affectedFiles : [testReview.reason],
+      message: "Test changes are required but no test evidence was found"
     }
   ];
 }
@@ -74,7 +79,8 @@ function normalizeSignal(signals: RiskSignal[], category: string, targetPoints: 
 
 export function assessRisk(
   files: PullRequestFile[],
-  rules?: RiskRule[]
+  rules?: RiskRule[],
+  testReview: TestReview = reviewTestsWithPolicy(files)
 ): RiskAssessment {
   const classifiedSignals = classifyFiles(files, rules);
   const signals: RiskSignal[] = [...classifiedSignals];
@@ -86,8 +92,8 @@ export function assessRisk(
   // Add broad-change and large-diff signals
   signals.push(...broadChangeSignals(files));
 
-  // Add missing-tests signal if no tests category signal exists
-  signals.push(...missingTestsSignal(classifiedSignals));
+  // Add a missing-tests signal only when the selected review path requires tests.
+  signals.push(...missingTestsSignal(testReview));
 
   const score = signals.reduce((sum, s) => sum + s.points, 0);
   const level = levelFromScore(score);
@@ -104,7 +110,8 @@ export function assessRisk(
     guidance: guidanceFor(level),
     signals,
     reviewerFocus,
-    testEvidenceFound: classifiedSignals.some((s) => s.category === "tests"),
+    testEvidenceFound: testReview.testEvidenceFound,
+    testReview,
     filesChanged: files.length,
     totalAdditions: files.reduce((sum, f) => sum + f.additions, 0),
     totalDeletions: files.reduce((sum, f) => sum + f.deletions, 0)

@@ -1,4 +1,4 @@
-import type { RiskRule } from "../types.js";
+import type { RiskRule, TestPolicy } from "../types.js";
 
 export const defaultRiskRules: RiskRule[] = [
   {
@@ -47,3 +47,15 @@ export const defaultRiskRules: RiskRule[] = [
     patterns: ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "tests/**"]
   }
 ];
+
+export const defaultTestPolicy: TestPolicy = {
+  testPatterns: ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "tests/**"],
+  sourcePatterns: [
+    "**/*.{js,jsx,mjs,cjs,ts,tsx,py,rb,go,java,kt,cs,php,rs,swift,scala,sh}"
+  ],
+  exemptPatterns: ["docs/**", "**/*.md", "**/*.d.ts", "**/*.generated.*"],
+  requireTestsFor: {
+    addedSourceFiles: true,
+    modifiedSourceFiles: false
+  }
+};

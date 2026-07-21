@@ -25,6 +25,14 @@ function makeAssessment(overrides: Partial<RiskAssessment> = {}): RiskAssessment
     ],
     reviewerFocus: ["src/auth/session.ts"],
     testEvidenceFound: false,
+    testReview: {
+      mode: "policy",
+      decision: "required",
+      confidence: "high",
+      reason: "Test fixture",
+      affectedFiles: ["src/auth/session.ts"],
+      testEvidenceFound: false,
+    },
     filesChanged: 2,
     totalAdditions: 40,
     totalDeletions: 12,
@@ -50,6 +58,16 @@ describe("renderReport", () => {
     expect(markdown).toContain(
       "**Merge guidance:** Senior review recommended before merge.",
     );
+  });
+
+  it("renders the structured test-review decision", () => {
+    const markdown = renderReport(makeAssessment());
+
+    expect(markdown).toContain("### Test Review");
+    expect(markdown).toContain("**Mode:** policy");
+    expect(markdown).toContain("**Decision:** Test changes required");
+    expect(markdown).toContain("**Reason:** `Test fixture`");
+    expect(markdown).toContain("`src/auth/session.ts`");
   });
 
   it("includes a Risk Signals table", () => {
@@ -209,5 +227,40 @@ describe("renderReport", () => {
     expect(markdown).toContain("**Overall risk:** low");
     expect(markdown).toContain("**Score:** 2");
     expect(markdown).toContain("**Merge guidance:** No unusual merge risk detected.");
+  });
+
+  it("uses a compact layout when no risk findings exist", () => {
+    const assessment = makeAssessment({
+      level: "low",
+      score: 0,
+      guidance: "No unusual merge risk detected.",
+      signals: [],
+      reviewerFocus: [],
+      testEvidenceFound: true,
+      testReview: {
+        mode: "agent",
+        decision: "not_required",
+        confidence: "high",
+        reason: "Changes are limited to documentation.",
+        affectedFiles: ["docs/guide.md"],
+        testEvidenceFound: false,
+      },
+    });
+
+    const markdown = renderReport(
+      assessment,
+      "- No elevated merge risk was detected for this documentation-only change.",
+    );
+
+    expect(markdown).toContain("### Summary");
+    expect(markdown).toContain("### Test Review");
+    expect(markdown).toContain("### Suggested Checklist");
+    expect(markdown).not.toContain("### Why This PR Is Risky");
+    expect(markdown).not.toContain("### Reviewer Focus");
+    expect(markdown).not.toContain("### Risk Signals");
+    expect(markdown).not.toContain("No specific files identified.");
+    expect(markdown).toContain(
+      "- Review the changed files for accuracy and intended scope.",
+    );
   });
 });

@@ -1,16 +1,16 @@
 name: "MergeRisk"
-description: "Post a concise merge-risk report on pull requests."
-author: "MergeRisk"
+description: "Analyze pull-request merge risk with deterministic scoring and optional AI insights."
+author: "One Code LLC"
 branding:
   icon: "shield"
   color: "blue"
 inputs:
   github-token:
-    description: "GitHub token used to read pull requests and write comments."
+    description: "GitHub token used to read pull requests and create or update report comments."
     required: true
     default: "${{ github.token }}"
   provider:
-    description: "AI provider: none, openai, openai-compatible, or anthropic."
+    description: "Optional AI provider: none, openai, openai-compatible, or anthropic."
     required: false
     default: "none"
   base-url:
@@ -41,13 +41,21 @@ inputs:
     description: "Optional path to a custom YAML risk profile."
     required: false
     default: ""
+  test-review-mode:
+    description: "How test impact is decided: auto, policy, or agent. Auto uses agent when a provider is configured."
+    required: false
+    default: "auto"
+  test-policy-path:
+    description: "Optional path to a YAML policy for deterministic test-review decisions."
+    required: false
+    default: ""
   ai-timeout-ms:
     description: "Request timeout in milliseconds for AI provider calls."
     required: false
     default: "30000"
 outputs:
   risk-level:
-    description: "Computed risk level: low, medium, high, or critical."
+    description: "Computed deterministic risk level: low, medium, high, or critical."
   risk-score:
     description: "Computed deterministic risk score."
 runs:

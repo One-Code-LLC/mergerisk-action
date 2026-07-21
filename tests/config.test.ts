@@ -14,6 +14,8 @@ describe("parseConfigFromInputs", () => {
     expect(config.maxPatchLines).toBe(1200);
     expect(config.commentMode).toBe("update");
     expect(config.riskProfilePath).toBe("");
+    expect(config.testReviewMode).toBe("auto");
+    expect(config.testPolicyPath).toBe("");
     expect(config.baseUrl).toBe("");
   });
 
@@ -140,6 +142,36 @@ describe("parseConfigFromInputs", () => {
     expect(config.apiKey).toBe("");
   });
 
+  it("accepts policy and agent test-review modes", () => {
+    const policy = parseConfigFromInputs({
+      "github-token": "ghs_test",
+      "test-review-mode": "policy",
+      "test-policy-path": "./test-policy.yml",
+    });
+    expect(policy.testReviewMode).toBe("policy");
+    expect(policy.testPolicyPath).toBe("./test-policy.yml");
+
+    const agent = parseConfigFromInputs({
+      "github-token": "ghs_test",
+      provider: "openai",
+      "api-key": "sk-test-key",
+      "test-review-mode": "agent",
+    });
+    expect(agent.testReviewMode).toBe("agent");
+  });
+
+  it("rejects an invalid test-review mode and agent mode without a provider", () => {
+    expect(() => parseConfigFromInputs({
+      "github-token": "ghs_test",
+      "test-review-mode": "invalid",
+    })).toThrow("Unsupported test-review-mode: invalid");
+
+    expect(() => parseConfigFromInputs({
+      "github-token": "ghs_test",
+      "test-review-mode": "agent",
+    })).toThrow("provider must be configured when test-review-mode is agent");
+  });
+
   it("rejects invalid fail-on-risk values including low", () => {
     expect(() =>
       parseConfigFromInputs({
@@ -203,6 +235,8 @@ describe("parseConfigFromInputs", () => {
       "max-patch-lines": "  500  ",
       "comment-mode": "  new  ",
       "risk-profile-path": "  ./custom.yml  ",
+      "test-review-mode": "  policy  ",
+      "test-policy-path": "  ./test-policy.yml  ",
     });
 
     expect(config.githubToken).toBe("ghs_test");
@@ -214,6 +248,8 @@ describe("parseConfigFromInputs", () => {
     expect(config.maxPatchLines).toBe(500);
     expect(config.commentMode).toBe("new");
     expect(config.riskProfilePath).toBe("./custom.yml");
+    expect(config.testReviewMode).toBe("policy");
+    expect(config.testPolicyPath).toBe("./test-policy.yml");
   });
 
   it("accepts valid max-patch-lines at boundaries", () => {

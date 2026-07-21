@@ -4,16 +4,34 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.x
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.x
-        with:
-          node-version: 24
-          cache: npm
+      - name: Check out the triggering commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w 0)" fetch --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Select cached Node.js 24
+        run: |
+          node_bin="$(find "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}/node" -maxdepth 3 -type d -path "*/24.*/x64/bin" | sort -V | tail -n 1)"
+          test -n "$node_bin"
+          test "$("$node_bin/node" -p 'process.versions.node.split(".")[0]')" = "24"
+          echo "$node_bin" >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
@@ -22,11 +40,21 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.x
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.x
-        with:
-          node-version: 24
-          cache: npm
+      - name: Check out the triggering commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w 0)" fetch --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Select cached Node.js 24
+        run: |
+          node_bin="$(find "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}/node" -maxdepth 3 -type d -path "*/24.*/x64/bin" | sort -V | tail -n 1)"
+          test -n "$node_bin"
+          test "$("$node_bin/node" -p 'process.versions.node.split(".")[0]')" = "24"
+          echo "$node_bin" >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm run build
       - name: Verify dist is up to date

@@ -1,6 +1,6 @@
 {
   "name": "mergerisk-action",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "GitHub Action that posts pull request merge-risk reports.",
   "type": "module",

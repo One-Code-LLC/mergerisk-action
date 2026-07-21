@@ -1,18 +1,20 @@
 # MergeRisk
 
-MergeRisk is a GitHub Action that posts one concise pull request merge-risk report.
+MergeRisk is a GitHub Action that posts one concise pull-request merge-risk
+report. It combines deterministic scoring with optional AI insights, so it is
+useful even when no AI provider is configured.
 
 It is not a generic AI code reviewer and does not replace human review, tests, or security scanning.
 
 ---
 
-## Example
+## Quick start
 
 ```yaml
 name: MergeRisk
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -24,13 +26,22 @@ jobs:
   risk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-        with:
-            ref: ${{ github.event.pull_request.base.sha }}
-      - uses: one-code-llc/mergerisk-action@928924014718afe14ec38fccf4e7fd7dfed38113 # v0.1.1
+      - uses: One-Code-LLC/mergerisk-action@v0
         with:
           github-token: ${{ github.token }}
 ```
+
+The Action does not need a checkout unless you use `risk-profile-path` or
+`test-policy-path`. Use `@v0` for the latest stable 0.x release or pin a
+specific stable version such as `@v0.1.2`. Do not use a pre-release for a
+production workflow.
+
+## Versioning
+
+MergeRisk follows [Semantic Versioning](https://semver.org/). The `v0` tag is
+advanced only to the latest stable 0.x release; `v0.1.2` identifies a specific
+release. The [changelog](CHANGELOG.md) and
+[release process](RELEASING.md) describe the release policy.
 
 ## Inputs
 
@@ -122,7 +133,7 @@ by AI output.
 ### OpenAI
 
 ```yaml
-- uses: your-org/mergerisk-action@v0
+- uses: One-Code-LLC/mergerisk-action@v0
   with:
     github-token: ${{ github.token }}
     provider: openai
@@ -132,7 +143,7 @@ by AI output.
 ### Anthropic
 
 ```yaml
-- uses: your-org/mergerisk-action@v0
+- uses: One-Code-LLC/mergerisk-action@v0
   with:
     github-token: ${{ github.token }}
     provider: anthropic
@@ -144,7 +155,7 @@ by AI output.
 Any provider that speaks the OpenAI Chat Completions format:
 
 ```yaml
-- uses: your-org/mergerisk-action@v0
+- uses: One-Code-LLC/mergerisk-action@v0
   with:
     github-token: ${{ github.token }}
     provider: openai-compatible
@@ -156,7 +167,7 @@ Any provider that speaks the OpenAI Chat Completions format:
 Local endpoint (Ollama / LM Studio):
 
 ```yaml
-- uses: your-org/mergerisk-action@v0
+- uses: One-Code-LLC/mergerisk-action@v0
   with:
     github-token: ${{ github.token }}
     provider: openai-compatible
@@ -165,14 +176,16 @@ Local endpoint (Ollama / LM Studio):
     model: qwen2.5-coder-7b-instruct
 ```
 
-Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or your provider's API key in your repository secrets.
+Store the provider key in a repository or organization secret and pass it
+through `api-key`, as shown above. Setting an environment variable alone does
+not configure MergeRisk.
 
 ## Failure Threshold
 
 Use `fail-on-risk` to fail the workflow when risk reaches a configured level:
 
 ```yaml
-- uses: your-org/mergerisk-action@v0
+- uses: One-Code-LLC/mergerisk-action@v0
   with:
     github-token: ${{ github.token }}
     fail-on-risk: high
@@ -251,10 +264,7 @@ jobs:
         with:
           # Check out the base branch, NOT the merge commit from the fork.
           ref: ${{ github.event.pull_request.base.sha }}
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-      - uses: your-org/mergerisk-action@v0
+      - uses: One-Code-LLC/mergerisk-action@v0
         with:
           github-token: ${{ github.token }}
           provider: none
@@ -264,7 +274,8 @@ jobs:
 > **Important:** The `actions/checkout` step checks out the **base branch**
 > (`pull_request.base.sha`), not the fork's merge commit. This prevents any
 > untrusted PR code from being executed in your workflow. MergeRisk only reads
-> the PR diff via the API — it does not need the PR's working tree.
+> the PR diff via the API. A checkout is needed only when your workflow uses a
+> custom risk profile or test policy from the base repository.
 
 ## Privacy and Safety
 
@@ -301,6 +312,15 @@ git commit -m "chore: rebuild dist bundle"
 ```
 
 CI verifies that the committed `dist/` matches a fresh build. If it does not, the `build` job fails.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor workflow and
+[RELEASING.md](RELEASING.md) for the stable-release process.
+
+## Support and security
+
+For help or feature requests, see [SUPPORT.md](SUPPORT.md). To report a
+vulnerability privately, follow [SECURITY.md](SECURITY.md); do not open a
+public issue for a security report.
 
 ---
 

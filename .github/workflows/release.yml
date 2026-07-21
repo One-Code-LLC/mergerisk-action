@@ -1,0 +1,52 @@
+name: Release preflight
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to validate (for example, v0.1.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the triggering commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w 0)" fetch --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Select cached Node.js 24
+        run: |
+          node_bin="$(find "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}/node" -maxdepth 3 -type d -path "*/24.*/x64/bin" | sort -V | tail -n 1)"
+          test -n "$node_bin"
+          test "$("$node_bin/node" -p 'process.versions.node.split(".")[0]')" = "24"
+          echo "$node_bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - name: Verify SemVer tag matches package version
+        env:
+          RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          node --input-type=module -e '
+            const tag = process.env.RELEASE_TAG;
+            const version = (await import("./package.json", { with: { type: "json" } })).default.version;
+            if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) throw new Error(`Invalid release tag: ${tag}`);
+            if (tag.slice(1) !== version) throw new Error(`Tag ${tag} does not match package.json version ${version}`);
+          '
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Verify committed distribution bundle
+        run: git diff --exit-code -- dist/

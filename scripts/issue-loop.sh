@@ -2,31 +2,69 @@
 set -Eeuo pipefail
 
 usage() {
-  printf 'Usage: %s [issue-count]\n' "$(basename "$0")"
+  printf 'Usage: %s [options] [issue-count]\n' "$(basename "$0")"
   printf '\n'
-  printf 'Selects the next oldest unclaimed GitHub issue, has /issue-executor-pr fix and commit it, publishes the PR, then runs /review-branch.\n'
-  printf 'issue-count must be a positive integer and defaults to 1.\n'
+  printf 'Runs gated mode by default. Use --legacy or -l for the OpenCode workflow.\n'
+  printf 'issue-count must be a positive integer and defaults to 1. APPROVER_LOGINS is DaNyNaNd.\n'
+  printf '\nLegacy options:\n'
+  printf '  -l, --legacy                  Use the OpenCode executor/reviewer workflow.\n'
+  printf '  --opencode-bin PATH           Default: opencode\n'
+  printf '  --executor-model MODEL        Default: opencode/north-mini-code-free\n'
+  printf '  --reviewer-model MODEL        Default: opencode/deepseek-v4-flash-free\n'
+  printf '  --executor-reasoning LEVEL    Default: high\n'
+  printf '  --reviewer-reasoning LEVEL    Default: high\n'
+  printf '  --executor-timeout DURATION   Default: 20m\n'
+  printf '  --preflight-timeout SECONDS   Default: 120\n'
+  printf '\nGated options:\n'
+  printf '  --codex-bin PATH              Default: codex\n'
+  printf '  --claude-bin PATH             Default: claude\n'
+  printf '  --codex-model MODEL           Default: Codex configured model\n'
+  printf '  --claude-model MODEL          Default: Claude configured model\n'
+  printf '  --codex-reasoning LEVEL       Default: high\n'
+  printf '  --claude-reasoning LEVEL      Default: high\n'
+  printf '  --max-review-cycles COUNT     Default: 3\n'
+  printf '  --worktree-root PATH          Default: %s/issue-loop-worktrees\n' "${TMPDIR:-/tmp}"
   printf 'Uses OPENCODE_REPO when set; otherwise derives owner/repo from the origin remote.\n'
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+issue_loop_mode="gated"
+issue_count=""
+while (( $# > 0 )); do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -l|--legacy) issue_loop_mode="legacy" ;;
+    --gated) issue_loop_mode="gated" ;;
+    --opencode-bin|--executor-model|--reviewer-model|--executor-reasoning|--reviewer-reasoning|--executor-timeout|--preflight-timeout|--codex-bin|--claude-bin|--codex-model|--claude-model|--codex-reasoning|--claude-reasoning|--max-review-cycles|--worktree-root)
+      [[ $# -ge 2 && -n "$2" ]] || { printf '%s requires a value.\n' "$1" >&2; exit 64; }
+      case "$1" in
+        --opencode-bin) cli_opencode_bin="$2" ;;
+        --executor-model) cli_executor_model="$2" ;;
+        --reviewer-model) cli_reviewer_model="$2" ;;
+        --executor-reasoning) cli_executor_reasoning="$2" ;;
+        --reviewer-reasoning) cli_reviewer_reasoning="$2" ;;
+        --executor-timeout) cli_executor_timeout="$2" ;;
+        --preflight-timeout) cli_preflight_timeout="$2" ;;
+        --codex-bin) cli_codex_bin="$2" ;;
+        --claude-bin) cli_claude_bin="$2" ;;
+        --codex-model) cli_codex_model="$2" ;;
+        --claude-model) cli_claude_model="$2" ;;
+        --codex-reasoning) cli_codex_reasoning="$2" ;;
+        --claude-reasoning) cli_claude_reasoning="$2" ;;
+        --max-review-cycles) cli_review_cycles="$2" ;;
+        --worktree-root) cli_worktree_root="$2" ;;
+      esac
+      shift
+      ;;
+    --*) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 64 ;;
+    *)
+      [[ -z "$issue_count" ]] || { printf 'Only one issue-count may be supplied.\n' >&2; usage >&2; exit 64; }
+      issue_count="$1"
+      ;;
+  esac
+  shift
+done
 
-if (( $# > 1 )); then
-  usage >&2
-  exit 64
-fi
-
-# Validate mode before any Git or GitHub command can change state.
-issue_loop_mode="${ISSUE_LOOP_MODE:-legacy}"
-if [[ "$issue_loop_mode" != "legacy" && "$issue_loop_mode" != "gated" ]]; then
-  printf 'ISSUE_LOOP_MODE must be legacy or gated; got: %s\n' "$issue_loop_mode" >&2
-  exit 64
-fi
-
-issue_count="${1:-1}"
+issue_count="${issue_count:-1}"
 if ! [[ "$issue_count" =~ ^[1-9][0-9]*$ ]]; then
   printf 'issue-count must be a positive integer; got: %s\n' "$issue_count" >&2
   usage >&2
@@ -50,26 +88,32 @@ if [[ -f "$env_file" ]]; then
   set +a
 fi
 
-opencode_bin="${OPENCODE_BIN:-opencode}"
+opencode_bin="${cli_opencode_bin:-${OPENCODE_BIN:-opencode}}"
 # Wall-clock cap per executor run so a runaway/looping executor (e.g. one
 # repeating the same git log forever) is abandoned instead of hanging the
 # whole batch. Default 20m; override with EXECUTOR_TIMEOUT (timeout(1) format,
 # e.g. 1200s, 30m). macOS ships no `timeout`; fall back to coreutils gtimeout,
 # else run unguarded with a warning.
-executor_timeout="${EXECUTOR_TIMEOUT:-20m}"
+executor_timeout="${cli_executor_timeout:-${EXECUTOR_TIMEOUT:-20m}}"
 # Executor model. The default free model occasionally goes unresponsive
 # (returns no tokens for the full timeout); override to a working model with
 # EXECUTOR_MODEL, e.g. opencode/deepseek-v4-flash-free.
-executor_model="${EXECUTOR_MODEL:-opencode/north-mini-code-free}"
+executor_model="${cli_executor_model:-${EXECUTOR_MODEL:-opencode/north-mini-code-free}}"
+executor_reasoning="${cli_executor_reasoning:-${EXECUTOR_REASONING:-high}}"
 # Preflight cap (seconds). The preflight makes the model complete a full tool
 # call (write a sentinel file), so it needs more headroom than a one-token ping -
 # a slow local/reasoning model has to load, read the instruction, emit the call,
 # and stop. Still bounded so a dead/throttled model aborts up front instead of
 # burning the full per-issue executor_timeout. Override with MODEL_PREFLIGHT_TIMEOUT.
-model_preflight_timeout="${MODEL_PREFLIGHT_TIMEOUT:-120}"
+model_preflight_timeout="${cli_preflight_timeout:-${MODEL_PREFLIGHT_TIMEOUT:-120}}"
 # Reviewer model. Same failure mode as the executor (free models go
 # unresponsive); override with REVIEWER_MODEL.
-reviewer_model="${REVIEWER_MODEL:-opencode/deepseek-v4-flash-free}"
+reviewer_model="${cli_reviewer_model:-${REVIEWER_MODEL:-opencode/deepseek-v4-flash-free}}"
+reviewer_reasoning="${cli_reviewer_reasoning:-${REVIEWER_REASONING:-high}}"
+
+# Gated mode is intentionally constrained to this approver until policy changes.
+APPROVER_LOGINS="DaNyNaNd"
+export APPROVER_LOGINS
 
 timeout_bin=""
 if command -v timeout >/dev/null 2>&1; then
@@ -621,7 +665,7 @@ EOF
     --dir "$repo_root"
     --command issue-executor-pr
     --model "$executor_model"
-    --variant high
+    --variant "$executor_reasoning"
     "$handoff_prompt"
   )
   if [[ -n "$timeout_bin" ]]; then
@@ -699,18 +743,34 @@ Do not print the contents in your reply - you must create the file with a tool c
   fail "${role} model ${model} did not respond within ${model_preflight_timeout}s (likely down or throttled). Re-run with ${override_var} set to a working model."
 }
 
-gated_codex_bin="${CODEX_BIN:-codex}"
-gated_claude_bin="${CLAUDE_BIN:-claude}"
-gated_codex_model="${CODEX_MODEL:-}"
-gated_claude_model="${CLAUDE_MODEL:-}"
-gated_review_cycles="${ISSUE_LOOP_MAX_REVIEW_CYCLES:-3}"
-gated_worktree_root="${ISSUE_LOOP_WORKTREE_ROOT:-${TMPDIR:-/tmp}/issue-loop-worktrees}"
+gated_codex_bin="${cli_codex_bin:-${CODEX_BIN:-codex}}"
+gated_claude_bin="${cli_claude_bin:-${CLAUDE_BIN:-claude}}"
+gated_codex_model="${cli_codex_model:-${CODEX_MODEL:-}}"
+gated_claude_model="${cli_claude_model:-${CLAUDE_MODEL:-}}"
+gated_codex_reasoning="${cli_codex_reasoning:-${CODEX_REASONING_EFFORT:-high}}"
+gated_claude_reasoning="${cli_claude_reasoning:-${CLAUDE_EFFORT:-high}}"
+gated_review_cycles="${cli_review_cycles:-${ISSUE_LOOP_MAX_REVIEW_CYCLES:-3}}"
+gated_worktree_root="${cli_worktree_root:-${ISSUE_LOOP_WORKTREE_ROOT:-${TMPDIR:-/tmp}/issue-loop-worktrees}}"
 
 gated_fail() { printf 'gated issue-loop: %s\n' "$1" >&2; return 1; }
 
 gated_dependency_numbers() {
   local body="$1"
-  printf '%s\n' "$body" | grep -ioE '(depends[ -]on|blocked[ -]by|prerequisite(s)?):?[[:space:]#,0-9A-Za-z/-]*' | grep -oE '#[0-9]+' | tr -d '#' | sort -un
+  printf '%s\n' "$body" \
+    | grep -ivE '(prerequisite|depends[ -]on|blocked[ -]by)[ -]*pr' \
+    | grep -ioE '(depends[ -]on|blocked[ -]by):?[[:space:]#,0-9]*' \
+    | grep -oE '#[0-9]+' \
+    | tr -d '#' \
+    | sort -un
+}
+
+gated_prerequisite_pr_numbers() {
+  local body="$1"
+  printf '%s\n' "$body" \
+    | grep -iE '(prerequisite|depends[ -]on|blocked[ -]by)[ -]*pr' \
+    | grep -oE '#[0-9]+' \
+    | tr -d '#' \
+    | sort -un
 }
 
 gated_issue_has_label() {
@@ -723,8 +783,10 @@ gated_approval_is_valid() {
   [[ -n "${APPROVER_LOGINS:-}" ]] || { gated_fail 'APPROVER_LOGINS is required in gated mode.'; return; }
   comments="$(gh issue view -R "$OPENCODE_REPO" "$selected_issue_number" --json comments --jq '.comments[] | [.author.login, .body] | @tsv')"
   while IFS=$'\t' read -r login body; do
+    body="$(printf '%b' "$body")"
     [[ ",${APPROVER_LOGINS}," == *",${login},"* ]] || continue
-    [[ "$body" == *'/approve-cl-plugin'* && "$body" == *"task: ${task_id}"* ]] || continue
+    printf '%s\n' "$body" | grep -Fxq '/approve-cl-plugin' || continue
+    printf '%s\n' "$body" | grep -Fxq "task: ${task_id}" || continue
     scope="$(printf '%s\n' "$body" | sed -nE 's/^[[:space:]]*scope:[[:space:]]*(.+[^[:space:]])[[:space:]]*$/\1/p' | head -n1)"
     sha="$(printf '%s\n' "$body" | sed -nE 's/^[[:space:]]*authority-commit:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' | head -n1)"
     [[ -n "$scope" && -n "$sha" ]] || continue
@@ -742,18 +804,23 @@ gated_dependency_is_satisfied() {
 }
 
 gated_dependencies_satisfied() {
-  local body="$1" dep
+  local body="$1" dep prerequisite_pr merged
   while read -r dep; do
     [[ -n "$dep" && "$dep" != "$selected_issue_number" ]] || continue
     gated_dependency_is_satisfied "$dep" || return 1
   done < <(gated_dependency_numbers "$body")
+  while read -r prerequisite_pr; do
+    [[ -n "$prerequisite_pr" ]] || continue
+    merged="$(gh pr view -R "$OPENCODE_REPO" "$prerequisite_pr" --json state,mergedAt --jq 'if .state == "MERGED" and .mergedAt != null then "yes" else "no" end' 2>/dev/null)" || return 1
+    [[ "$merged" == "yes" ]] || return 1
+  done < <(gated_prerequisite_pr_numbers "$body")
 }
 
 gated_select_issue() {
   local number title json labels body task_id
   while IFS=$'\t' read -r number title; do
     json="$(gh issue view -R "$OPENCODE_REPO" "$number" --json number,title,body,labels,comments --jq '.')"
-    labels="$(printf '%s' "$json" | gh issue view -R "$OPENCODE_REPO" "$number" --json labels --jq '.labels[].name')"
+    labels="$(gh issue view -R "$OPENCODE_REPO" "$number" --json labels --jq '.labels[].name')"
     gated_issue_has_label "$labels" blocked && continue
     gated_issue_has_label "$labels" approval-required && continue
     body="$(gh issue view -R "$OPENCODE_REPO" "$number" --json body --jq '.body // ""')"
@@ -762,7 +829,7 @@ gated_select_issue() {
     [[ -n "$task_id" ]] || { printf 'Skipping #%s: no CL-PLUGIN task identifier.\n' "$number"; continue; }
     gated_dependencies_satisfied "$body" || { printf 'Skipping #%s: a declared prerequisite is not closed by a merged PR.\n' "$number"; continue; }
     gated_approval_is_valid "$task_id" || { printf 'Skipping #%s: no valid approval for %s.\n' "$number" "$task_id"; continue; }
-    selected_issue_branch="cl-plugin/${task_id,,}-$(slugify_issue_title "$title")"
+    selected_issue_branch="cl-plugin/$(slugify_issue_title "$task_id")-$(slugify_issue_title "$title")"
     return 0
   done < <(gh issue list -R "$OPENCODE_REPO" --state open --label cl-plugin --label automation-ready --limit 200 --search 'sort:created-asc' --json number,title --jq '.[] | [.number,.title] | @tsv')
   gated_fail 'No selectable gated issue found.'
@@ -774,7 +841,11 @@ gated_create_or_resume_worktree() {
   if [[ -d "$gated_worktree/.git" || -f "$gated_worktree/.git" ]]; then return 0; fi
   if git -C "$repo_root" ls-remote --exit-code --heads origin "$selected_issue_branch" >/dev/null 2>&1; then
     git -C "$repo_root" fetch origin "$selected_issue_branch"
-    git -C "$repo_root" worktree add "$gated_worktree" "$selected_issue_branch"
+    if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${selected_issue_branch}"; then
+      git -C "$repo_root" worktree add "$gated_worktree" "$selected_issue_branch"
+    else
+      git -C "$repo_root" worktree add -b "$selected_issue_branch" "$gated_worktree" "origin/${selected_issue_branch}"
+    fi
   else
     git -C "$repo_root" worktree add -b "$selected_issue_branch" "$gated_worktree" origin/main
   fi
@@ -782,19 +853,29 @@ gated_create_or_resume_worktree() {
 
 gated_run_codex() {
   local prompt="$1"
-  local -a cmd=("$gated_codex_bin" exec -C "$gated_worktree" -s workspace-write -a never)
+  local -a cmd=("$gated_codex_bin" exec -C "$gated_worktree" -s workspace-write -a never -c "model_reasoning_effort=\"${gated_codex_reasoning}\"")
   [[ -z "$gated_codex_model" ]] || cmd+=(-m "$gated_codex_model")
   "${cmd[@]}" "$prompt"
 }
 
 gated_review() {
-  local head="$1" out="$2" prompt
+  local head="$1" out="$2" prompt status_before status_after head_after
   prompt="Review commit ${head} against origin/main. You are read-only: do not edit files, commit, push, or invoke GitHub write commands. Return JSON only with reviewed_commit_sha, outcome (approved|changes_requested|blocked), blocking_findings, nonblocking_findings, commands_run, and residual_risks."
-  local -a cmd=("$gated_claude_bin" -p --permission-mode plan --tools 'Read,Glob,Grep,Bash' --allowed-tools 'Read,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(npm test *),Bash(pnpm test *)' --disallowed-tools 'Edit,Write,Bash(git commit *),Bash(git push *),Bash(gh pr *),Bash(gh issue *)' --output-format json --json-schema '{"type":"object","required":["reviewed_commit_sha","outcome","blocking_findings","nonblocking_findings","commands_run","residual_risks"]}')
+  local -a cmd=("$gated_claude_bin" -p --permission-mode plan --effort "$gated_claude_reasoning" --tools 'Read,Glob,Grep,Bash' --allowed-tools 'Read,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(npm test *),Bash(pnpm test *)' --disallowed-tools 'Edit,Write,Bash(git commit *),Bash(git push *),Bash(gh pr *),Bash(gh issue *)' --output-format json --json-schema '{"type":"object","required":["reviewed_commit_sha","outcome","blocking_findings","nonblocking_findings","commands_run","residual_risks"]}')
   [[ -z "$gated_claude_model" ]] || cmd+=(--model "$gated_claude_model")
+  status_before="$(git -C "$gated_worktree" status --porcelain)"
   (cd "$gated_worktree" && "${cmd[@]}" "$prompt") >"$out"
+  status_after="$(git -C "$gated_worktree" status --porcelain)"
+  head_after="$(git -C "$gated_worktree" rev-parse HEAD)"
+  [[ "$status_after" == "$status_before" && "$head_after" == "$head" ]] || return 1
   grep -Eq "\"reviewed_commit_sha\"[[:space:]]*:[[:space:]]*\"${head}\"" "$out" || return 1
   grep -Eq '"outcome"[[:space:]]*:[[:space:]]*"(approved|changes_requested|blocked)"' "$out"
+}
+
+gated_review_is_approved() {
+  local review="$1"
+  grep -Eq '"outcome"[[:space:]]*:[[:space:]]*"approved"' "$review" \
+    && grep -Eq '"blocking_findings"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]' "$review"
 }
 
 gated_block() {
@@ -812,11 +893,12 @@ gated_run() {
   validate_preconditions
   for ((issue_index=1; issue_index<=issue_count; issue_index++)); do
     selected_pr_number=""; gated_select_issue; gated_create_or_resume_worktree
-    gated_run_codex "Implement selected issue #${selected_issue_number}. Read repository AGENTS.md, the issue, and linked task record. Optional .ai files may be absent. Commit the implementation; do not push or create a PR."
-    git -C "$gated_worktree" status --short | grep -q . && { gated_block 'Codex left uncommitted changes.'; continue; }
-    git -C "$gated_worktree" push -u origin "$selected_issue_branch"
     selected_pr_number="$(gh pr list -R "$OPENCODE_REPO" --head "$selected_issue_branch" --state open --json number --jq '.[0].number // empty')"
     if [[ -z "$selected_pr_number" ]]; then
+      gated_run_codex "Implement selected issue #${selected_issue_number}. Read repository AGENTS.md, the selected issue JSON below, and its linked task record. Optional .ai files may be absent. Commit the implementation; do not push or create a PR.\n\n${selected_issue_json}"
+      git -C "$gated_worktree" status --short | grep -q . && { gated_block 'Codex left uncommitted changes.'; continue; }
+      [[ "$(git -C "$gated_worktree" rev-list --count origin/main..HEAD)" != "0" ]] || { gated_block 'Codex produced no commit ahead of origin/main.'; continue; }
+      git -C "$gated_worktree" push -u origin "$selected_issue_branch"
       gh pr create -R "$OPENCODE_REPO" --draft --base main --head "$selected_issue_branch" --title "${selected_issue_title}" --body "Fixes #${selected_issue_number}"
       selected_pr_number="$(gh pr list -R "$OPENCODE_REPO" --head "$selected_issue_branch" --state open --json number --jq '.[0].number // empty')"
     fi
@@ -825,15 +907,18 @@ gated_run() {
       mkdir -p "${gated_worktree_root}/logs"
       head="$(git -C "$gated_worktree" rev-parse HEAD)"; review="${gated_worktree_root}/logs/issue-${selected_issue_number}-review-${cycle}.json"
       if ! gated_review "$head" "$review"; then gated_block 'Claude review was malformed or did not review the current commit.'; break; fi
-      if grep -Eq '"outcome"[[:space:]]*:[[:space:]]*"approved"' "$review"; then
+      if gated_review_is_approved "$review"; then
         if gh pr checks -R "$OPENCODE_REPO" "$selected_pr_number" --required; then
           gh pr edit -R "$OPENCODE_REPO" "$selected_pr_number" --add-label human-review-ready
           gh issue edit -R "$OPENCODE_REPO" "$selected_issue_number" --add-label human-review-ready
         else gated_block 'Required CI checks are not green.'; fi
         break
       fi
+      local resolver_head
+      resolver_head="$head"
       gated_run_codex "Resolve the blocking findings in ${review}. Commit the fixes and push nothing."
       git -C "$gated_worktree" status --short | grep -q . && { gated_block 'Codex resolver left uncommitted changes.'; break; }
+      [[ "$(git -C "$gated_worktree" rev-parse HEAD)" != "$resolver_head" ]] || { gated_block 'Codex resolver did not create a new commit.'; break; }
       git -C "$gated_worktree" push origin "$selected_issue_branch"
       if (( cycle == gated_review_cycles )); then gated_block "Blocking findings remain after ${gated_review_cycles} review cycles."; fi
     done
@@ -877,12 +962,12 @@ for ((issue_index = 1; issue_index <= issue_count; issue_index++)); do
   ensure_issue_branch_has_commits
   ensure_issue_pr
 
-  printf '\n== /review-branch: %s max ==\n' "$reviewer_model"
+  printf '\n== /review-branch: %s %s ==\n' "$reviewer_model" "$reviewer_reasoning"
   "$opencode_bin" run \
     --dir "$repo_root" \
     --command review-branch \
     --model "$reviewer_model" \
-    --variant max
+    --variant "$reviewer_reasoning"
 
   printf '\n== Returning to main ==\n'
   git -C "$repo_root" status --short

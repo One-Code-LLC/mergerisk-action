@@ -4,7 +4,7 @@ set -Eeuo pipefail
 usage() {
   printf 'Usage: %s [issue-count]\n' "$(basename "$0")"
   printf '\n'
-  printf 'Selects the next oldest unclaimed MergeRisk GitHub issue, has /issue-executor-pr fix and commit it, publishes the PR, then runs /review-branch.\n'
+  printf 'Selects the next oldest unclaimed GitHub issue, has /issue-executor-pr fix and commit it, publishes the PR, then runs /review-branch.\n'
   printf 'issue-count must be a positive integer and defaults to 1.\n'
   printf 'Uses OPENCODE_REPO when set; otherwise derives owner/repo from the origin remote.\n'
 }
@@ -19,6 +19,13 @@ if (( $# > 1 )); then
   exit 64
 fi
 
+# Validate mode before any Git or GitHub command can change state.
+issue_loop_mode="${ISSUE_LOOP_MODE:-legacy}"
+if [[ "$issue_loop_mode" != "legacy" && "$issue_loop_mode" != "gated" ]]; then
+  printf 'ISSUE_LOOP_MODE must be legacy or gated; got: %s\n' "$issue_loop_mode" >&2
+  exit 64
+fi
+
 issue_count="${1:-1}"
 if ! [[ "$issue_count" =~ ^[1-9][0-9]*$ ]]; then
   printf 'issue-count must be a positive integer; got: %s\n' "$issue_count" >&2
@@ -26,12 +33,16 @@ if ! [[ "$issue_count" =~ ^[1-9][0-9]*$ ]]; then
   exit 64
 fi
 
+# System-wide command: repo_root is the git toplevel of the caller's cwd.
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" \
+  || { printf 'issue-loop must be run from inside a git repository.\n' >&2; exit 64; }
+
 # Load repo-root .env (if present) so model/timeout overrides can live there
 # instead of the caller's shell. set -a exports every assignment so the
 # ${VAR:-default} reads below pick them up. Note: a value in .env overrides one
 # already exported in the shell - to override for a single run, edit .env.
 # ponytail: source the file directly; these values are simple KEY=VALUE pairs.
-env_file="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/.env"
+env_file="$repo_root/.env"
 if [[ -f "$env_file" ]]; then
   set -a
   # shellcheck disable=SC1090
@@ -66,8 +77,6 @@ if command -v timeout >/dev/null 2>&1; then
 elif command -v gtimeout >/dev/null 2>&1; then
   timeout_bin=gtimeout
 fi
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -- "$script_dir/.." && pwd)"
 selected_issue_number=""
 selected_issue_title=""
 selected_issue_json=""
@@ -460,6 +469,32 @@ candidate_has_remote_branch() {
   [[ -n "$matching_branches" ]]
 }
 
+# Legacy keeps its permissive contract: only an open dependency blocks; closed
+# and missing references remain selectable. Gated mode uses its own fail-closed
+# predicate below.
+candidate_dependency_numbers() {
+  local body="$1"
+  printf '%s\n' "$body" \
+    | grep -ioE '(depends[ -]on|blocked[ -]by):?[[:space:]#,0-9]*' \
+    | grep -oE '[0-9]+' \
+    | sort -un
+}
+
+candidate_first_open_dependency() {
+  local issue_number="$1"
+  local body="$2"
+  local dep state
+  while read -r dep; do
+    [[ -n "$dep" && "$dep" != "$issue_number" ]] || continue
+    state="$(gh issue view -R "$OPENCODE_REPO" "$dep" --json state --jq '.state' 2>/dev/null || true)"
+    if [[ "$state" == "OPEN" ]]; then
+      printf '%s' "$dep"
+      return 0
+    fi
+  done < <(candidate_dependency_numbers "$body")
+  return 1
+}
+
 select_next_issue() {
   local issue_number
   local issue_title
@@ -480,14 +515,17 @@ select_next_issue() {
       continue
     fi
 
-    gh issue view \
-      -R "$OPENCODE_REPO" \
-      "$issue_number" \
-      --json number,title,state,url,closedByPullRequestsReferences,comments >/dev/null
-
     if candidate_has_remote_branch "$issue_number"; then
       printf 'Skipping #%s: matching issue-fix branch already exists.\n' "$issue_number"
       mark_completed_or_skipped "$issue_number"
+      continue
+    fi
+
+    local candidate_body blocking_dep
+    candidate_body="$(gh issue view -R "$OPENCODE_REPO" "$issue_number" --json body --jq '.body // ""')"
+    blocking_dep="$(candidate_first_open_dependency "$issue_number" "$candidate_body" || true)"
+    if [[ -n "$blocking_dep" ]]; then
+      printf 'Skipping #%s: waiting on open dependency #%s (see "depends-on" in the issue body).\n' "$issue_number" "$blocking_dep"
       continue
     fi
 
@@ -538,6 +576,12 @@ checkout_selected_issue_branch() {
 
 run_issue_executor() {
   local handoff_prompt
+  local repo_context=""
+  local repo_context_file="$repo_root/.ai/issue-loop-context.md"
+
+  if [[ -f "$repo_context_file" ]]; then
+    repo_context="$(printf '\nRepo-specific context (%s):\n\n%s\n' "$repo_context_file" "$(cat "$repo_context_file")")"
+  fi
 
   handoff_prompt="$(cat <<EOF
 The issue-loop script selected the next issue before this handoff.
@@ -551,13 +595,7 @@ The issue-loop script has already created and checked out ${selected_issue_branc
 Complete the implementation and verification in this run. Stage only the intended files.
 Commit the completed fix on the current branch.
 Do not push the branch or create a pull request. The issue-loop script owns push and draft PR creation after it verifies your commit.
-
-MergeRisk project context:
-- This repository is a Node 24 TypeScript GitHub Action for pull request merge-risk reports.
-- Before editing, read README.md, 01-product-spec.md, docs/superpowers/plans/2026-06-29-mergerisk-action.md, and 02-agent-task-backlog.md.
-- If the selected GitHub issue maps to an item in 02-agent-task-backlog.md, follow its acceptance criteria and implementation plan task number.
-- Keep the MVP scope locked: bring-your-own model key, deterministic risk scoring, optional AI synthesis, one sticky PR comment, no SaaS backend.
-- Use tests-first implementation for TypeScript behavior changes. At minimum, run the verification commands named by the selected issue or backlog item before committing.
+${repo_context}
 
 Before editing, re-run the duplicate gate for #${selected_issue_number}:
 1. gh issue view -R "\$OPENCODE_REPO" ${selected_issue_number} --json number,title,state,url,closedByPullRequestsReferences,comments
@@ -661,6 +699,148 @@ Do not print the contents in your reply - you must create the file with a tool c
   fail "${role} model ${model} did not respond within ${model_preflight_timeout}s (likely down or throttled). Re-run with ${override_var} set to a working model."
 }
 
+gated_codex_bin="${CODEX_BIN:-codex}"
+gated_claude_bin="${CLAUDE_BIN:-claude}"
+gated_codex_model="${CODEX_MODEL:-}"
+gated_claude_model="${CLAUDE_MODEL:-}"
+gated_review_cycles="${ISSUE_LOOP_MAX_REVIEW_CYCLES:-3}"
+gated_worktree_root="${ISSUE_LOOP_WORKTREE_ROOT:-${TMPDIR:-/tmp}/issue-loop-worktrees}"
+
+gated_fail() { printf 'gated issue-loop: %s\n' "$1" >&2; return 1; }
+
+gated_dependency_numbers() {
+  local body="$1"
+  printf '%s\n' "$body" | grep -ioE '(depends[ -]on|blocked[ -]by|prerequisite(s)?):?[[:space:]#,0-9A-Za-z/-]*' | grep -oE '#[0-9]+' | tr -d '#' | sort -un
+}
+
+gated_issue_has_label() {
+  local labels="$1" label="$2"
+  printf '%s\n' "$labels" | grep -Fxq "$label"
+}
+
+gated_approval_is_valid() {
+  local task_id="$1" comments login body sha scope
+  [[ -n "${APPROVER_LOGINS:-}" ]] || { gated_fail 'APPROVER_LOGINS is required in gated mode.'; return; }
+  comments="$(gh issue view -R "$OPENCODE_REPO" "$selected_issue_number" --json comments --jq '.comments[] | [.author.login, .body] | @tsv')"
+  while IFS=$'\t' read -r login body; do
+    [[ ",${APPROVER_LOGINS}," == *",${login},"* ]] || continue
+    [[ "$body" == *'/approve-cl-plugin'* && "$body" == *"task: ${task_id}"* ]] || continue
+    scope="$(printf '%s\n' "$body" | sed -nE 's/^[[:space:]]*scope:[[:space:]]*(.+[^[:space:]])[[:space:]]*$/\1/p' | head -n1)"
+    sha="$(printf '%s\n' "$body" | sed -nE 's/^[[:space:]]*authority-commit:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' | head -n1)"
+    [[ -n "$scope" && -n "$sha" ]] || continue
+    if git -C "$repo_root" merge-base --is-ancestor "$sha" origin/main; then return 0; fi
+  done <<<"$comments"
+  return 1
+}
+
+gated_dependency_is_satisfied() {
+  local dep="$1" state merged
+  state="$(gh issue view -R "$OPENCODE_REPO" "$dep" --json state --jq '.state' 2>/dev/null)" || return 1
+  [[ "$state" == "CLOSED" ]] || return 1
+  merged="$(gh issue view -R "$OPENCODE_REPO" "$dep" --json closedByPullRequestsReferences --jq '[.closedByPullRequestsReferences[]? | select(.mergedAt != null)] | length' 2>/dev/null)" || return 1
+  [[ "$merged" =~ ^[1-9][0-9]*$ ]]
+}
+
+gated_dependencies_satisfied() {
+  local body="$1" dep
+  while read -r dep; do
+    [[ -n "$dep" && "$dep" != "$selected_issue_number" ]] || continue
+    gated_dependency_is_satisfied "$dep" || return 1
+  done < <(gated_dependency_numbers "$body")
+}
+
+gated_select_issue() {
+  local number title json labels body task_id
+  while IFS=$'\t' read -r number title; do
+    json="$(gh issue view -R "$OPENCODE_REPO" "$number" --json number,title,body,labels,comments --jq '.')"
+    labels="$(printf '%s' "$json" | gh issue view -R "$OPENCODE_REPO" "$number" --json labels --jq '.labels[].name')"
+    gated_issue_has_label "$labels" blocked && continue
+    gated_issue_has_label "$labels" approval-required && continue
+    body="$(gh issue view -R "$OPENCODE_REPO" "$number" --json body --jq '.body // ""')"
+    selected_issue_number="$number"; selected_issue_title="$title"; selected_issue_json="$json"
+    task_id="$(printf '%s\n' "$body" | grep -oE 'CL-PLUGIN-[0-9]+' | head -n1 || true)"
+    [[ -n "$task_id" ]] || { printf 'Skipping #%s: no CL-PLUGIN task identifier.\n' "$number"; continue; }
+    gated_dependencies_satisfied "$body" || { printf 'Skipping #%s: a declared prerequisite is not closed by a merged PR.\n' "$number"; continue; }
+    gated_approval_is_valid "$task_id" || { printf 'Skipping #%s: no valid approval for %s.\n' "$number" "$task_id"; continue; }
+    selected_issue_branch="cl-plugin/${task_id,,}-$(slugify_issue_title "$title")"
+    return 0
+  done < <(gh issue list -R "$OPENCODE_REPO" --state open --label cl-plugin --label automation-ready --limit 200 --search 'sort:created-asc' --json number,title --jq '.[] | [.number,.title] | @tsv')
+  gated_fail 'No selectable gated issue found.'
+}
+
+gated_create_or_resume_worktree() {
+  gated_worktree="$gated_worktree_root/${OPENCODE_REPO//\//_}/issue-${selected_issue_number}"
+  mkdir -p "$(dirname "$gated_worktree")"
+  if [[ -d "$gated_worktree/.git" || -f "$gated_worktree/.git" ]]; then return 0; fi
+  if git -C "$repo_root" ls-remote --exit-code --heads origin "$selected_issue_branch" >/dev/null 2>&1; then
+    git -C "$repo_root" fetch origin "$selected_issue_branch"
+    git -C "$repo_root" worktree add "$gated_worktree" "$selected_issue_branch"
+  else
+    git -C "$repo_root" worktree add -b "$selected_issue_branch" "$gated_worktree" origin/main
+  fi
+}
+
+gated_run_codex() {
+  local prompt="$1"
+  local -a cmd=("$gated_codex_bin" exec -C "$gated_worktree" -s workspace-write -a never)
+  [[ -z "$gated_codex_model" ]] || cmd+=(-m "$gated_codex_model")
+  "${cmd[@]}" "$prompt"
+}
+
+gated_review() {
+  local head="$1" out="$2" prompt
+  prompt="Review commit ${head} against origin/main. You are read-only: do not edit files, commit, push, or invoke GitHub write commands. Return JSON only with reviewed_commit_sha, outcome (approved|changes_requested|blocked), blocking_findings, nonblocking_findings, commands_run, and residual_risks."
+  local -a cmd=("$gated_claude_bin" -p --permission-mode plan --tools 'Read,Glob,Grep,Bash' --allowed-tools 'Read,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(npm test *),Bash(pnpm test *)' --disallowed-tools 'Edit,Write,Bash(git commit *),Bash(git push *),Bash(gh pr *),Bash(gh issue *)' --output-format json --json-schema '{"type":"object","required":["reviewed_commit_sha","outcome","blocking_findings","nonblocking_findings","commands_run","residual_risks"]}')
+  [[ -z "$gated_claude_model" ]] || cmd+=(--model "$gated_claude_model")
+  (cd "$gated_worktree" && "${cmd[@]}" "$prompt") >"$out"
+  grep -Eq "\"reviewed_commit_sha\"[[:space:]]*:[[:space:]]*\"${head}\"" "$out" || return 1
+  grep -Eq '"outcome"[[:space:]]*:[[:space:]]*"(approved|changes_requested|blocked)"' "$out"
+}
+
+gated_block() {
+  local reason="$1"
+  gh issue edit -R "$OPENCODE_REPO" "$selected_issue_number" --add-label blocked
+  gh issue comment -R "$OPENCODE_REPO" "$selected_issue_number" --body "gated issue-loop blocked: ${reason}"
+  [[ -z "$selected_pr_number" ]] || gh pr edit -R "$OPENCODE_REPO" "$selected_pr_number" --add-label blocked
+}
+
+gated_run() {
+  # Never merge automatically. The controller only publishes and labels drafts.
+  [[ "$gated_review_cycles" =~ ^[1-9][0-9]*$ ]] || gated_fail 'ISSUE_LOOP_MAX_REVIEW_CYCLES must be a positive integer.'
+  command -v "$gated_codex_bin" >/dev/null || gated_fail "Codex binary not found: $gated_codex_bin"
+  command -v "$gated_claude_bin" >/dev/null || gated_fail "Claude binary not found: $gated_claude_bin"
+  validate_preconditions
+  for ((issue_index=1; issue_index<=issue_count; issue_index++)); do
+    selected_pr_number=""; gated_select_issue; gated_create_or_resume_worktree
+    gated_run_codex "Implement selected issue #${selected_issue_number}. Read repository AGENTS.md, the issue, and linked task record. Optional .ai files may be absent. Commit the implementation; do not push or create a PR."
+    git -C "$gated_worktree" status --short | grep -q . && { gated_block 'Codex left uncommitted changes.'; continue; }
+    git -C "$gated_worktree" push -u origin "$selected_issue_branch"
+    selected_pr_number="$(gh pr list -R "$OPENCODE_REPO" --head "$selected_issue_branch" --state open --json number --jq '.[0].number // empty')"
+    if [[ -z "$selected_pr_number" ]]; then
+      gh pr create -R "$OPENCODE_REPO" --draft --base main --head "$selected_issue_branch" --title "${selected_issue_title}" --body "Fixes #${selected_issue_number}"
+      selected_pr_number="$(gh pr list -R "$OPENCODE_REPO" --head "$selected_issue_branch" --state open --json number --jq '.[0].number // empty')"
+    fi
+    local cycle head review
+    for ((cycle=1; cycle<=gated_review_cycles; cycle++)); do
+      mkdir -p "${gated_worktree_root}/logs"
+      head="$(git -C "$gated_worktree" rev-parse HEAD)"; review="${gated_worktree_root}/logs/issue-${selected_issue_number}-review-${cycle}.json"
+      if ! gated_review "$head" "$review"; then gated_block 'Claude review was malformed or did not review the current commit.'; break; fi
+      if grep -Eq '"outcome"[[:space:]]*:[[:space:]]*"approved"' "$review"; then
+        if gh pr checks -R "$OPENCODE_REPO" "$selected_pr_number" --required; then
+          gh pr edit -R "$OPENCODE_REPO" "$selected_pr_number" --add-label human-review-ready
+          gh issue edit -R "$OPENCODE_REPO" "$selected_issue_number" --add-label human-review-ready
+        else gated_block 'Required CI checks are not green.'; fi
+        break
+      fi
+      gated_run_codex "Resolve the blocking findings in ${review}. Commit the fixes and push nothing."
+      git -C "$gated_worktree" status --short | grep -q . && { gated_block 'Codex resolver left uncommitted changes.'; break; }
+      git -C "$gated_worktree" push origin "$selected_issue_branch"
+      if (( cycle == gated_review_cycles )); then gated_block "Blocking findings remain after ${gated_review_cycles} review cycles."; fi
+    done
+  done
+}
+
+run_legacy() {
 validate_preconditions
 # Check both models before any issue work so a dead endpoint aborts up front
 # rather than after the executor has already done work the reviewer can't review.
@@ -712,3 +892,10 @@ for ((issue_index = 1; issue_index <= issue_count; issue_index++)); do
 done
 
 printf '\nProcessed %d issue(s).\n' "$issue_count"
+}
+
+if [[ "$issue_loop_mode" == "legacy" ]]; then
+  run_legacy
+else
+  gated_run
+fi

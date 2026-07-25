@@ -15,6 +15,7 @@ const mockContext = vi.hoisted(() => ({
 
 vi.mock("@actions/core", () => ({
   getInput: vi.fn(),
+  getIDToken: vi.fn(),
   setSecret: vi.fn(),
   setOutput: vi.fn(),
   setFailed: vi.fn(),
@@ -29,6 +30,10 @@ vi.mock("@actions/github", () => ({
 
 vi.mock("../src/config.js", () => ({
   parseConfigFromInputs: vi.fn(),
+}));
+
+vi.mock("../src/entitlement/check.js", () => ({
+  enforceEntitlement: vi.fn(),
 }));
 
 vi.mock("../src/risk/profile.js", () => ({
@@ -74,6 +79,7 @@ vi.mock("../src/github/comment.js", () => ({
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { parseConfigFromInputs } from "../src/config.js";
+import { enforceEntitlement } from "../src/entitlement/check.js";
 import { loadRiskRules } from "../src/risk/profile.js";
 import { loadTestPolicy } from "../src/risk/test-policy.js";
 import { reviewTestsWithPolicy } from "../src/risk/test-review.js";
@@ -104,6 +110,12 @@ function defaultConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     testReviewMode: "auto",
     testPolicyPath: "",
     aiTimeoutMs: 30000,
+    entitlement: {
+      mode: "community",
+      serviceUrl: "",
+      token: "",
+      timeoutMs: 3000,
+    },
     ...overrides,
   };
 }
@@ -152,6 +164,7 @@ describe("run", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockContext.payload = {};
+    vi.mocked(enforceEntitlement).mockResolvedValue({ mode: "community" });
     vi.mocked(loadTestPolicy).mockResolvedValue({
       testPatterns: ["tests/**"],
       sourcePatterns: ["src/**"],
@@ -180,6 +193,7 @@ describe("run", () => {
     expect(core.setOutput).not.toHaveBeenCalled();
     expect(core.setFailed).not.toHaveBeenCalled();
     expect(parseConfigFromInputs).not.toHaveBeenCalled();
+    expect(enforceEntitlement).not.toHaveBeenCalled();
     expect(loadRiskRules).not.toHaveBeenCalled();
     expect(loadTestPolicy).not.toHaveBeenCalled();
     expect(listPullRequestFiles).not.toHaveBeenCalled();
@@ -208,6 +222,14 @@ describe("run", () => {
     await run();
 
     expect(parseConfigFromInputs).toHaveBeenCalled();
+    expect(enforceEntitlement).toHaveBeenCalledWith(
+      config.entitlement,
+      { organization: "acme", repository: "acme/app" },
+      expect.objectContaining({
+        getOidcToken: expect.any(Function),
+        maskSecret: expect.any(Function),
+      }),
+    );
     expect(loadRiskRules).toHaveBeenCalledWith(config.riskProfilePath);
     expect(loadTestPolicy).toHaveBeenCalledWith(config.testPolicyPath);
     expect(listPullRequestFiles).toHaveBeenCalledWith(
@@ -234,6 +256,33 @@ describe("run", () => {
     expect(core.setOutput).toHaveBeenCalledWith("risk-level", "medium");
     expect(core.setOutput).toHaveBeenCalledWith("risk-score", "5");
     expect(core.setFailed).not.toHaveBeenCalled();
+  });
+
+  it("stops before reading pull-request data when commercial entitlement is denied", async () => {
+    const config = defaultConfig({
+      entitlement: {
+        mode: "commercial",
+        serviceUrl: "https://entitlements.example.com/v1/check",
+        token: "",
+        timeoutMs: 3000,
+      },
+    });
+    mockContext.payload = { pull_request: { number: 42 } };
+    vi.mocked(parseConfigFromInputs).mockReturnValue(config);
+    vi.mocked(enforceEntitlement).mockRejectedValueOnce(
+      new Error(
+        "MergeRisk commercial entitlement is not active for organization acme (expired).",
+      ),
+    );
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      "MergeRisk commercial entitlement is not active for organization acme (expired).",
+    );
+    expect(github.getOctokit).not.toHaveBeenCalled();
+    expect(listPullRequestFiles).not.toHaveBeenCalled();
+    expect(upsertReportComment).not.toHaveBeenCalled();
   });
 
   it("uses an agent review in auto mode when a provider is configured", async () => {

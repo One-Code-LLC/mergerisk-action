@@ -53,6 +53,22 @@ inputs:
     description: "Request timeout in milliseconds for AI provider calls."
     required: false
     default: "30000"
+  entitlement-mode:
+    description: "Licensing mode: community (no entitlement request) or commercial (verify an organization entitlement)."
+    required: false
+    default: "community"
+  entitlement-url:
+    description: "HTTPS entitlement-check endpoint. Required only when entitlement-mode is commercial."
+    required: false
+    default: ""
+  entitlement-token:
+    description: "Optional scoped service token for environments without GitHub Actions OIDC. Prefer OIDC on GitHub.com."
+    required: false
+    default: ""
+  entitlement-timeout-ms:
+    description: "Entitlement request timeout in milliseconds (500-10000)."
+    required: false
+    default: "3000"
 outputs:
   risk-level:
     description: "Computed deterministic risk level: low, medium, high, or critical."

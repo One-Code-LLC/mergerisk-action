@@ -17,6 +17,12 @@ describe("parseConfigFromInputs", () => {
     expect(config.testReviewMode).toBe("auto");
     expect(config.testPolicyPath).toBe("");
     expect(config.baseUrl).toBe("");
+    expect(config.entitlement).toEqual({
+      mode: "community",
+      serviceUrl: "",
+      token: "",
+      timeoutMs: 3000,
+    });
   });
 
   it("rejects missing github-token", () => {
@@ -288,5 +294,97 @@ describe("parseConfigFromInputs", () => {
       "comment-mode": "new",
     });
     expect(newMode.commentMode).toBe("new");
+  });
+
+  it("accepts an OIDC-backed commercial entitlement configuration", () => {
+    const config = parseConfigFromInputs({
+      "github-token": "ghs_test",
+      "entitlement-mode": "commercial",
+      "entitlement-url": "https://entitlements.example.com/v1/check",
+      "entitlement-timeout-ms": "1500",
+    });
+
+    expect(config.entitlement).toEqual({
+      mode: "commercial",
+      serviceUrl: "https://entitlements.example.com/v1/check",
+      token: "",
+      timeoutMs: 1500,
+    });
+  });
+
+  it("accepts a scoped fallback entitlement token", () => {
+    const config = parseConfigFromInputs({
+      "github-token": "ghs_test",
+      "entitlement-mode": "commercial",
+      "entitlement-url": "https://entitlements.example.com/v1/check",
+      "entitlement-token": "  scoped-secret  ",
+    });
+
+    expect(config.entitlement.token).toBe("scoped-secret");
+  });
+
+  it("keeps community mode local even when commercial inputs are present", () => {
+    const config = parseConfigFromInputs({
+      "github-token": "ghs_test",
+      "entitlement-url": "https://entitlements.example.com/v1/check",
+      "entitlement-token": "unused-secret",
+    });
+
+    expect(config.entitlement.mode).toBe("community");
+    expect(config.entitlement.serviceUrl).toBe("");
+    expect(config.entitlement.token).toBe("");
+  });
+
+  it("requires a secure URL in commercial mode", () => {
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        "entitlement-mode": "commercial",
+      }),
+    ).toThrow("entitlement-url is required");
+
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        "entitlement-mode": "commercial",
+        "entitlement-url": "http://entitlements.example.com/v1/check",
+      }),
+    ).toThrow("entitlement-url must use HTTPS");
+
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        "entitlement-mode": "commercial",
+        "entitlement-url": "https://user:password@entitlements.example.com/check",
+      }),
+    ).toThrow("entitlement-url must not contain credentials");
+
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        "entitlement-mode": "commercial",
+        "entitlement-url": "https://entitlements.example.com/check?token=secret",
+      }),
+    ).toThrow("entitlement-url must not contain query parameters");
+  });
+
+  it("rejects invalid commercial mode and timeout inputs", () => {
+    expect(() =>
+      parseConfigFromInputs({
+        "github-token": "ghs_test",
+        "entitlement-mode": "optional",
+      }),
+    ).toThrow("Unsupported entitlement-mode: optional");
+
+    for (const timeout of ["499", "10001", "not-a-number"]) {
+      expect(() =>
+        parseConfigFromInputs({
+          "github-token": "ghs_test",
+          "entitlement-timeout-ms": timeout,
+        }),
+      ).toThrow(
+        "entitlement-timeout-ms must be an integer from 500 to 10000",
+      );
+    }
   });
 });

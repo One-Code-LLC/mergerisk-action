@@ -6,6 +6,15 @@ export type CommentMode = "update" | "new";
 
 export type TestReviewMode = "auto" | "policy" | "agent";
 
+export type EntitlementMode = "community" | "commercial";
+
+export interface EntitlementConfig {
+  mode: EntitlementMode;
+  serviceUrl: string;
+  token: string;
+  timeoutMs: number;
+}
+
 export type TestReviewDecision = "required" | "not_required" | "inconclusive";
 
 export type TestReviewConfidence = "high" | "medium" | "low";
@@ -23,6 +32,7 @@ export interface ActionConfig {
   testReviewMode: TestReviewMode;
   testPolicyPath: string;
   aiTimeoutMs: number;
+  entitlement: EntitlementConfig;
 }
 
 export interface PullRequestFile {

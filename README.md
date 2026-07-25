@@ -59,6 +59,10 @@ release. The [changelog](CHANGELOG.md) and
 | `test-review-mode` | no | `auto` | `auto`, `policy`, or `agent`. `auto` uses an agent only when a provider is configured. |
 | `test-policy-path` | no | empty | Optional YAML file controlling deterministic test-review decisions. |
 | `ai-timeout-ms` | no | `30000` | Request timeout in ms for AI provider calls. |
+| `entitlement-mode` | no | `community` | `community` makes no licensing request; `commercial` verifies a future paid organization entitlement. |
+| `entitlement-url` | no | empty | HTTPS check endpoint, required only in `commercial` mode. No production endpoint ships with this repository. |
+| `entitlement-token` | no | empty | Optional scoped fallback secret when GitHub Actions OIDC is unavailable. |
+| `entitlement-timeout-ms` | no | `3000` | Commercial check timeout in ms, from 500 to 10000. |
 
 ## Outputs
 
@@ -202,6 +206,57 @@ rewrites the same comment rather than creating a new one.
   and updates it. Creates one if none exists.
 - **`comment-mode: new`** — Creates a new report comment on every run.
 
+## Commercial entitlement foundation
+
+All features currently in this repository remain available in Community mode
+under the MIT license. Community mode is the default, performs no entitlement
+authentication or network request, and is appropriate for self-hosted or offline
+runners. No paid feature, billing account, GitHub App, or production entitlement
+service is included today.
+
+The opt-in contract below is reserved for future commercial features. On
+GitHub.com, use GitHub Actions OIDC rather than a long-lived licensing secret:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  id-token: write
+
+steps:
+  - uses: One-Code-LLC/mergerisk-action@v0
+    with:
+      github-token: ${{ github.token }}
+      entitlement-mode: commercial
+      entitlement-url: https://entitlements.example.com/v1/check
+```
+
+`entitlements.example.com` is a placeholder, not a live MergeRisk service. In an
+environment without GitHub OIDC, an organization-scoped, revocable secret can be
+passed explicitly:
+
+```yaml
+      entitlement-token: ${{ secrets.MERGERISK_ENTITLEMENT_TOKEN }}
+```
+
+The Action masks the credential and sends only product/feature identifiers plus
+the repository owner and name. It never sends source, patches, reports, the
+GitHub token, or AI credentials to the entitlement endpoint.
+
+Commercial mode fails closed for an authoritative denial, expired or canceled
+plan, invalid credential, malformed response, or missing authentication. It
+continues with a warning for that run on a timeout, network error, rate limit, or
+5xx outage. This fixed policy prevents a licensing-service incident from blocking
+merge queues while keeping configuration and account failures visible. Switching
+to Community mode remains an explicit, legitimate path to the current free
+feature set.
+
+See the [commercial entitlement decision record](docs/decisions/0001-commercial-entitlements.md)
+and [entitlement service operations guide](docs/entitlement-service-operations.md)
+for product rules, security boundaries, API details, and the future Marketplace
+lifecycle.
+
 ## Permissions
 
 The action needs these permissions:
@@ -279,11 +334,16 @@ jobs:
 
 ## Privacy and Safety
 
-- **No hosted backend.** MergeRisk runs entirely in your workflow.
+- **Community mode has no hosted backend.** MergeRisk runs entirely in your
+  workflow unless you explicitly configure a commercial entitlement endpoint or
+  an AI provider.
 - **No OAuth.** You provide your own GitHub token and model API key.
 - **No dashboard.** All output is in PR comments and workflow logs.
 - **No repository indexing.** No code or metadata is sent to a third-party service
   beyond the AI provider you explicitly configure.
+- **Entitlement requests are metadata-only.** Commercial mode sends the
+  repository owner/name and product identifiers, authenticated by a short-lived
+  OIDC token or an explicit scoped secret; it sends no PR content.
 - **Patch content is truncated** before AI calls. Only the first
   `max-patch-lines` (default 1200) of patch text are sent.
 - **API keys are masked** in workflow logs.

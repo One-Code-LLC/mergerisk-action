@@ -21,6 +21,12 @@ function config(overrides: Partial<ActionConfig> = {}): ActionConfig {
     testReviewMode: "agent",
     testPolicyPath: "",
     aiTimeoutMs: 30000,
+    entitlement: {
+      mode: "community",
+      serviceUrl: "",
+      token: "",
+      timeoutMs: 3000,
+    },
     ...overrides,
   };
 }

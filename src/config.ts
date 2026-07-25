@@ -1,25 +1,11 @@
-export type RiskLevel = "low" | "medium" | "high" | "critical";
-
-export type Provider = "none" | "openai" | "openai-compatible" | "anthropic";
-
-export type CommentMode = "update" | "new";
-
-export type TestReviewMode = "auto" | "policy" | "agent";
-
-export interface ActionConfig {
-  githubToken: string;
-  provider: Provider;
-  model: string;
-  apiKey: string;
-  baseUrl: string;
-  failOnRisk: RiskLevel | "none";
-  maxPatchLines: number;
-  commentMode: CommentMode;
-  riskProfilePath: string;
-  testReviewMode: TestReviewMode;
-  testPolicyPath: string;
-  aiTimeoutMs: number;
-}
+import type {
+  ActionConfig,
+  CommentMode,
+  EntitlementMode,
+  Provider,
+  RiskLevel,
+  TestReviewMode,
+} from "./types.js";
 
 type RawInputs = Record<string, string>;
 
@@ -27,6 +13,7 @@ const providers: Provider[] = ["none", "openai", "openai-compatible", "anthropic
 const failOnRiskValues: Array<RiskLevel | "none"> = ["none", "medium", "high", "critical"];
 const commentModes: CommentMode[] = ["update", "new"];
 const testReviewModes: TestReviewMode[] = ["auto", "policy", "agent"];
+const entitlementModes: EntitlementMode[] = ["community", "commercial"];
 
 function pickProvider(value: string): Provider {
   const normalized = value.trim().toLowerCase() || "none";
@@ -101,6 +88,58 @@ function pickAiTimeoutMs(value: string): number {
   return parsed;
 }
 
+function pickEntitlementMode(value: string): EntitlementMode {
+  const normalized = value.trim().toLowerCase() || "community";
+  if (!entitlementModes.includes(normalized as EntitlementMode)) {
+    throw new Error(`Unsupported entitlement-mode: ${value}`);
+  }
+  return normalized as EntitlementMode;
+}
+
+function pickEntitlementUrl(value: string, mode: EntitlementMode): string {
+  const normalized = value.trim();
+  if (mode === "community") {
+    return "";
+  }
+  if (!normalized) {
+    throw new Error(
+      "entitlement-url is required when entitlement-mode is commercial",
+    );
+  }
+
+  let url: URL;
+  try {
+    url = new URL(normalized);
+  } catch {
+    throw new Error("entitlement-url must be a valid HTTPS URL");
+  }
+  if (url.protocol !== "https:") {
+    throw new Error("entitlement-url must use HTTPS");
+  }
+  if (url.username || url.password) {
+    throw new Error("entitlement-url must not contain credentials");
+  }
+  if (url.search || url.hash) {
+    throw new Error(
+      "entitlement-url must not contain query parameters or a fragment",
+    );
+  }
+  return url.toString();
+}
+
+function pickEntitlementTimeoutMs(value: string): number {
+  if (!value.trim()) {
+    return 3000;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 500 || parsed > 10000) {
+    throw new Error(
+      "entitlement-timeout-ms must be an integer from 500 to 10000",
+    );
+  }
+  return parsed;
+}
+
 export function parseConfigFromInputs(inputs: RawInputs): ActionConfig {
   const githubToken = inputs["github-token"]?.trim() ?? "";
   if (!githubToken) {
@@ -116,6 +155,7 @@ export function parseConfigFromInputs(inputs: RawInputs): ActionConfig {
   if (testReviewMode === "agent" && provider === "none") {
     throw new Error("provider must be configured when test-review-mode is agent");
   }
+  const entitlementMode = pickEntitlementMode(inputs["entitlement-mode"] ?? "");
 
   return {
     githubToken,
@@ -130,5 +170,19 @@ export function parseConfigFromInputs(inputs: RawInputs): ActionConfig {
     testReviewMode,
     testPolicyPath: inputs["test-policy-path"]?.trim() ?? "",
     aiTimeoutMs: pickAiTimeoutMs(inputs["ai-timeout-ms"] ?? ""),
+    entitlement: {
+      mode: entitlementMode,
+      serviceUrl: pickEntitlementUrl(
+        inputs["entitlement-url"] ?? "",
+        entitlementMode,
+      ),
+      token:
+        entitlementMode === "commercial"
+          ? (inputs["entitlement-token"]?.trim() ?? "")
+          : "",
+      timeoutMs: pickEntitlementTimeoutMs(
+        inputs["entitlement-timeout-ms"] ?? "",
+      ),
+    },
   };
 }

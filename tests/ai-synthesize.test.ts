@@ -16,6 +16,12 @@ function makeConfig(overrides: Partial<ActionConfig> = {}): ActionConfig {
     testReviewMode: "auto",
     testPolicyPath: "",
     aiTimeoutMs: 30000,
+    entitlement: {
+      mode: "community",
+      serviceUrl: "",
+      token: "",
+      timeoutMs: 3000,
+    },
     ...overrides
   };
 }

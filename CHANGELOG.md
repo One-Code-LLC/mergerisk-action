@@ -5,6 +5,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- An opt-in, organization-level commercial entitlement contract with GitHub OIDC
+  authentication, a scoped-token fallback, bounded outage behavior, and tests.
+- Product/security decision guidance and an entitlement-service and GitHub
+  Marketplace lifecycle operations guide.
+
+### Changed
+
+- Clarified that the current MIT feature set remains local and available by
+  default in Community mode.
+
 ## [0.1.2] - pending release
 
 ### Added

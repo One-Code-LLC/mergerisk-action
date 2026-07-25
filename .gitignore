@@ -3,3 +3,6 @@ dist-types/
 coverage/
 .env
 .DS_Store
+
+# Local commercial launch working plan (intentionally not committed)
+PRODUCTION_READINESS.local.md

@@ -37701,6 +37701,36 @@ exports.visitAsync = visitAsync;
 /******/ }
 /******/ 
 /************************************************************************/
+/******/ /* webpack/runtime/create fake namespace object */
+/******/ (() => {
+/******/ 	var getProto = Object.getPrototypeOf ? (obj) => (Object.getPrototypeOf(obj)) : (obj) => (obj.__proto__);
+/******/ 	var leafPrototypes;
+/******/ 	// create a fake namespace object
+/******/ 	// mode & 1: value is a module id, require it
+/******/ 	// mode & 2: merge all properties of value into the ns
+/******/ 	// mode & 4: return value when already ns object
+/******/ 	// mode & 16: return value when it's Promise-like
+/******/ 	// mode & 8|1: behave like require
+/******/ 	__nccwpck_require__.t = function(value, mode) {
+/******/ 		if(mode & 1) value = this(value);
+/******/ 		if(mode & 8) return value;
+/******/ 		if(typeof value === 'object' && value) {
+/******/ 			if((mode & 4) && value.__esModule) return value;
+/******/ 			if((mode & 16) && typeof value.then === 'function') return value;
+/******/ 		}
+/******/ 		var ns = Object.create(null);
+/******/ 		__nccwpck_require__.r(ns);
+/******/ 		var def = {};
+/******/ 		leafPrototypes = leafPrototypes || [null, getProto({}), getProto([]), getProto(getProto)];
+/******/ 		for(var current = mode & 2 && value; typeof current == 'object' && !~leafPrototypes.indexOf(current); current = getProto(current)) {
+/******/ 			Object.getOwnPropertyNames(current).forEach((key) => (def[key] = () => (value[key])));
+/******/ 		}
+/******/ 		def['default'] = () => (value);
+/******/ 		__nccwpck_require__.d(ns, def);
+/******/ 		return ns;
+/******/ 	};
+/******/ })();
+/******/ 
 /******/ /* webpack/runtime/define property getters */
 /******/ (() => {
 /******/ 	// define getter functions for harmony exports
@@ -37716,6 +37746,17 @@ exports.visitAsync = visitAsync;
 /******/ /* webpack/runtime/hasOwnProperty shorthand */
 /******/ (() => {
 /******/ 	__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ })();
+/******/ 
+/******/ /* webpack/runtime/make namespace object */
+/******/ (() => {
+/******/ 	// define __esModule on exports
+/******/ 	__nccwpck_require__.r = (exports) => {
+/******/ 		if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 			Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 		}
+/******/ 		Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 	};
 /******/ })();
 /******/ 
 /******/ /* webpack/runtime/compat */
@@ -37903,8 +37944,10 @@ function file_command_prepareKeyValueMessage(key, value) {
 const external_path_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("path");
 // EXTERNAL MODULE: external "http"
 var external_http_ = __nccwpck_require__(8611);
+var external_http_namespaceObject = /*#__PURE__*/__nccwpck_require__.t(external_http_, 2);
 // EXTERNAL MODULE: external "https"
 var external_https_ = __nccwpck_require__(5692);
+var external_https_namespaceObject = /*#__PURE__*/__nccwpck_require__.t(external_https_, 2);
 ;// CONCATENATED MODULE: ./node_modules/@actions/http-client/lib/proxy.js
 function getProxyUrl(reqUrl) {
     const usingSsl = reqUrl.protocol === 'https:';
@@ -37997,7 +38040,7 @@ class DecodedURL extends URL {
 }
 //# sourceMappingURL=proxy.js.map
 // EXTERNAL MODULE: ./node_modules/tunnel/index.js
-var node_modules_tunnel = __nccwpck_require__(770);
+var tunnel = __nccwpck_require__(770);
 // EXTERNAL MODULE: ./node_modules/undici/index.js
 var undici = __nccwpck_require__(6752);
 ;// CONCATENATED MODULE: ./node_modules/@actions/http-client/lib/index.js
@@ -38075,7 +38118,7 @@ const HttpResponseRetryCodes = [
     HttpCodes.ServiceUnavailable,
     HttpCodes.GatewayTimeout
 ];
-const RetryableHttpVerbs = (/* unused pure expression or super */ null && (['OPTIONS', 'GET', 'DELETE', 'HEAD']));
+const RetryableHttpVerbs = ['OPTIONS', 'GET', 'DELETE', 'HEAD'];
 const ExponentialBackoffCeiling = 10;
 const ExponentialBackoffTimeSlice = 5;
 class HttpClientError extends Error {
@@ -38121,7 +38164,7 @@ function isHttps(requestUrl) {
     const parsedUrl = new URL(requestUrl);
     return parsedUrl.protocol === 'https:';
 }
-class lib_HttpClient {
+class HttpClient {
     constructor(userAgent, handlers, requestOptions) {
         this._ignoreSslError = false;
         this._allowRedirects = true;
@@ -38424,7 +38467,7 @@ class lib_HttpClient {
     }
     getAgentDispatcher(serverUrl) {
         const parsedUrl = new URL(serverUrl);
-        const proxyUrl = pm.getProxyUrl(parsedUrl);
+        const proxyUrl = getProxyUrl(parsedUrl);
         const useProxy = proxyUrl && proxyUrl.hostname;
         if (!useProxy) {
             return;
@@ -38435,7 +38478,7 @@ class lib_HttpClient {
         const info = {};
         info.parsedUrl = requestUrl;
         const usingSsl = info.parsedUrl.protocol === 'https:';
-        info.httpModule = usingSsl ? https : http;
+        info.httpModule = usingSsl ? external_https_namespaceObject : external_http_namespaceObject;
         const defaultPort = usingSsl ? 443 : 80;
         info.options = {};
         info.options.host = info.parsedUrl.hostname;
@@ -38534,7 +38577,7 @@ class lib_HttpClient {
     }
     _getAgent(parsedUrl) {
         let agent;
-        const proxyUrl = pm.getProxyUrl(parsedUrl);
+        const proxyUrl = getProxyUrl(parsedUrl);
         const useProxy = proxyUrl && proxyUrl.hostname;
         if (this._keepAlive && useProxy) {
             agent = this._proxyAgent;
@@ -38549,7 +38592,7 @@ class lib_HttpClient {
         const usingSsl = parsedUrl.protocol === 'https:';
         let maxSockets = 100;
         if (this.requestOptions) {
-            maxSockets = this.requestOptions.maxSockets || http.globalAgent.maxSockets;
+            maxSockets = this.requestOptions.maxSockets || external_http_.globalAgent.maxSockets;
         }
         // This is `useProxy` again, but we need to check `proxyURl` directly for TypeScripts's flow analysis.
         if (proxyUrl && proxyUrl.hostname) {
@@ -38574,7 +38617,7 @@ class lib_HttpClient {
         // if tunneling agent isn't assigned create a new agent
         if (!agent) {
             const options = { keepAlive: this._keepAlive, maxSockets };
-            agent = usingSsl ? new https.Agent(options) : new http.Agent(options);
+            agent = usingSsl ? new external_https_.Agent(options) : new external_http_.Agent(options);
             this._agent = agent;
         }
         if (usingSsl && this._ignoreSslError) {
@@ -38597,7 +38640,7 @@ class lib_HttpClient {
             return proxyAgent;
         }
         const usingSsl = parsedUrl.protocol === 'https:';
-        proxyAgent = new ProxyAgent(Object.assign({ uri: proxyUrl.href, pipelining: !this._keepAlive ? 0 : 1 }, ((proxyUrl.username || proxyUrl.password) && {
+        proxyAgent = new undici.ProxyAgent(Object.assign({ uri: proxyUrl.href, pipelining: !this._keepAlive ? 0 : 1 }, ((proxyUrl.username || proxyUrl.password) && {
             token: `Basic ${Buffer.from(`${proxyUrl.username}:${proxyUrl.password}`).toString('base64')}`
         })));
         this._proxyAgentDispatcher = proxyAgent;
@@ -38728,7 +38771,7 @@ class BasicCredentialHandler {
         });
     }
 }
-class auth_BearerCredentialHandler {
+class BearerCredentialHandler {
     constructor(token) {
         this.token = token;
     }
@@ -38786,13 +38829,13 @@ var oidc_utils_awaiter = (undefined && undefined.__awaiter) || function (thisArg
 
 
 
-class oidc_utils_OidcClient {
+class OidcClient {
     static createHttpClient(allowRetry = true, maxRetry = 10) {
         const requestOptions = {
             allowRetries: allowRetry,
             maxRetries: maxRetry
         };
-        return new HttpClient('actions/oidc-client', [new BearerCredentialHandler(oidc_utils_OidcClient.getRequestToken())], requestOptions);
+        return new HttpClient('actions/oidc-client', [new BearerCredentialHandler(OidcClient.getRequestToken())], requestOptions);
     }
     static getRequestToken() {
         const token = process.env['ACTIONS_ID_TOKEN_REQUEST_TOKEN'];
@@ -38811,7 +38854,7 @@ class oidc_utils_OidcClient {
     static getCall(id_token_url) {
         return oidc_utils_awaiter(this, void 0, void 0, function* () {
             var _a;
-            const httpclient = oidc_utils_OidcClient.createHttpClient();
+            const httpclient = OidcClient.createHttpClient();
             const res = yield httpclient
                 .getJson(id_token_url)
                 .catch(error => {
@@ -38830,13 +38873,13 @@ class oidc_utils_OidcClient {
         return oidc_utils_awaiter(this, void 0, void 0, function* () {
             try {
                 // New ID Token is requested from action service
-                let id_token_url = oidc_utils_OidcClient.getIDTokenUrl();
+                let id_token_url = OidcClient.getIDTokenUrl();
                 if (audience) {
                     const encodedAudience = encodeURIComponent(audience);
                     id_token_url = `${id_token_url}&audience=${encodedAudience}`;
                 }
                 debug(`ID token url is ${id_token_url}`);
-                const id_token = yield oidc_utils_OidcClient.getCall(id_token_url);
+                const id_token = yield OidcClient.getCall(id_token_url);
                 setSecret(id_token);
                 return id_token;
             }
@@ -40434,7 +40477,7 @@ function exportVariable(name, val) {
  * console.log(`Using token: ${apiToken}`); // Outputs: "Using token: ***"
  * ```
  */
-function core_setSecret(secret) {
+function setSecret(secret) {
     command_issueCommand('add-mask', {}, secret);
 }
 /**
@@ -40556,8 +40599,8 @@ function isDebug() {
  * Writes debug message to user log
  * @param message debug message
  */
-function core_debug(message) {
-    issueCommand('debug', {}, message);
+function debug(message) {
+    command_issueCommand('debug', {}, message);
 }
 /**
  * Adds an error issue
@@ -44997,6 +45040,7 @@ const providers = ["none", "openai", "openai-compatible", "anthropic"];
 const failOnRiskValues = ["none", "medium", "high", "critical"];
 const commentModes = ["update", "new"];
 const testReviewModes = ["auto", "policy", "agent"];
+const entitlementModes = ["community", "commercial"];
 function pickProvider(value) {
     const normalized = value.trim().toLowerCase() || "none";
     if (!providers.includes(normalized)) {
@@ -45064,6 +45108,49 @@ function pickAiTimeoutMs(value) {
     }
     return parsed;
 }
+function pickEntitlementMode(value) {
+    const normalized = value.trim().toLowerCase() || "community";
+    if (!entitlementModes.includes(normalized)) {
+        throw new Error(`Unsupported entitlement-mode: ${value}`);
+    }
+    return normalized;
+}
+function pickEntitlementUrl(value, mode) {
+    const normalized = value.trim();
+    if (mode === "community") {
+        return "";
+    }
+    if (!normalized) {
+        throw new Error("entitlement-url is required when entitlement-mode is commercial");
+    }
+    let url;
+    try {
+        url = new URL(normalized);
+    }
+    catch {
+        throw new Error("entitlement-url must be a valid HTTPS URL");
+    }
+    if (url.protocol !== "https:") {
+        throw new Error("entitlement-url must use HTTPS");
+    }
+    if (url.username || url.password) {
+        throw new Error("entitlement-url must not contain credentials");
+    }
+    if (url.search || url.hash) {
+        throw new Error("entitlement-url must not contain query parameters or a fragment");
+    }
+    return url.toString();
+}
+function pickEntitlementTimeoutMs(value) {
+    if (!value.trim()) {
+        return 3000;
+    }
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed < 500 || parsed > 10000) {
+        throw new Error("entitlement-timeout-ms must be an integer from 500 to 10000");
+    }
+    return parsed;
+}
 function parseConfigFromInputs(inputs) {
     const githubToken = inputs["github-token"]?.trim() ?? "";
     if (!githubToken) {
@@ -45078,6 +45165,7 @@ function parseConfigFromInputs(inputs) {
     if (testReviewMode === "agent" && provider === "none") {
         throw new Error("provider must be configured when test-review-mode is agent");
     }
+    const entitlementMode = pickEntitlementMode(inputs["entitlement-mode"] ?? "");
     return {
         githubToken,
         provider,
@@ -45091,6 +45179,14 @@ function parseConfigFromInputs(inputs) {
         testReviewMode,
         testPolicyPath: inputs["test-policy-path"]?.trim() ?? "",
         aiTimeoutMs: pickAiTimeoutMs(inputs["ai-timeout-ms"] ?? ""),
+        entitlement: {
+            mode: entitlementMode,
+            serviceUrl: pickEntitlementUrl(inputs["entitlement-url"] ?? "", entitlementMode),
+            token: entitlementMode === "commercial"
+                ? (inputs["entitlement-token"]?.trim() ?? "")
+                : "",
+            timeoutMs: pickEntitlementTimeoutMs(inputs["entitlement-timeout-ms"] ?? ""),
+        },
     };
 }
 
@@ -45289,6 +45385,182 @@ async function reviewTestsWithAgent(config, files) {
         ? await requestAnthropic(config, files)
         : await requestOpenAI(config, files, config.provider === "openai-compatible" ? config.baseUrl : test_review_OPENAI_BASE);
     return parseReview(content, files);
+}
+
+;// CONCATENATED MODULE: ./src/entitlement/check.ts
+const ENTITLEMENT_AUDIENCE = "mergerisk-entitlement-v1";
+const activeStatuses = new Set([
+    "active",
+    "trialing",
+]);
+const inactiveStatuses = new Set([
+    "canceled",
+    "expired",
+    "not_entitled",
+    "quota_exceeded",
+]);
+function invalidResponse() {
+    return {
+        kind: "denied",
+        status: "not_entitled",
+        reasonCode: "invalid_response",
+    };
+}
+function parseServiceResponse(value) {
+    if (!value || typeof value !== "object") {
+        return invalidResponse();
+    }
+    const response = value;
+    if (response.contract_version !== 1) {
+        return invalidResponse();
+    }
+    if (response.decision === "allow" &&
+        activeStatuses.has(response.status)) {
+        if (response.plan !== undefined && typeof response.plan !== "string") {
+            return invalidResponse();
+        }
+        if (response.valid_until !== undefined &&
+            (typeof response.valid_until !== "string" ||
+                !Number.isFinite(Date.parse(response.valid_until)))) {
+            return invalidResponse();
+        }
+        if (typeof response.valid_until === "string" &&
+            Date.parse(response.valid_until) <= Date.now()) {
+            return {
+                kind: "denied",
+                status: "expired",
+                reasonCode: "not_active",
+            };
+        }
+        return {
+            kind: "allowed",
+            status: response.status,
+            ...(typeof response.plan === "string" ? { plan: response.plan } : {}),
+            ...(typeof response.valid_until === "string"
+                ? { validUntil: response.valid_until }
+                : {}),
+        };
+    }
+    if (response.decision === "deny" &&
+        inactiveStatuses.has(response.status)) {
+        return {
+            kind: "denied",
+            status: response.status,
+            reasonCode: "not_active",
+        };
+    }
+    return invalidResponse();
+}
+class HttpEntitlementClient {
+    serviceUrl;
+    timeoutMs;
+    fetchImpl;
+    constructor(serviceUrl, timeoutMs, fetchImpl = fetch) {
+        this.serviceUrl = serviceUrl;
+        this.timeoutMs = timeoutMs;
+        this.fetchImpl = fetchImpl;
+    }
+    async check(request, bearerToken) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+        try {
+            const response = await this.fetchImpl(this.serviceUrl, {
+                method: "POST",
+                headers: {
+                    accept: "application/json",
+                    authorization: `Bearer ${bearerToken}`,
+                    "content-type": "application/json",
+                    "user-agent": "mergerisk-action/entitlement-v1",
+                },
+                body: JSON.stringify({
+                    contract_version: request.contractVersion,
+                    product: request.product,
+                    feature: request.feature,
+                    organization: request.organization,
+                    repository: request.repository,
+                }),
+                redirect: "error",
+                signal: controller.signal,
+            });
+            if (response.status === 408 || response.status === 429) {
+                return {
+                    kind: "unavailable",
+                    reason: response.status === 429 ? "rate_limited" : "timeout",
+                };
+            }
+            if (response.status >= 500) {
+                return { kind: "unavailable", reason: "server" };
+            }
+            if (!response.ok) {
+                return {
+                    kind: "denied",
+                    status: "not_entitled",
+                    reasonCode: "authorization_failed",
+                };
+            }
+            try {
+                return parseServiceResponse(await response.json());
+            }
+            catch {
+                return invalidResponse();
+            }
+        }
+        catch {
+            return {
+                kind: "unavailable",
+                reason: controller.signal.aborted ? "timeout" : "network",
+            };
+        }
+        finally {
+            clearTimeout(timeout);
+        }
+    }
+}
+function denialMessage(organization, status) {
+    const state = status.replace("_", " ");
+    return (`MergeRisk commercial entitlement is not active for organization ` +
+        `${organization} (${state}). Current community features remain available ` +
+        "with entitlement-mode: community; commercial features require an active plan.");
+}
+async function enforceEntitlement(config, identity, runtime, client = new HttpEntitlementClient(config.serviceUrl, config.timeoutMs)) {
+    if (config.mode === "community") {
+        runtime.info("MergeRisk Community mode: no commercial entitlement check is required.");
+        return { mode: "community" };
+    }
+    let token = config.token;
+    if (!token) {
+        try {
+            token = await runtime.getOidcToken(ENTITLEMENT_AUDIENCE);
+        }
+        catch {
+            throw new Error("MergeRisk commercial entitlement authentication is unavailable. " +
+                "Grant the workflow id-token: write permission or provide a scoped entitlement-token.");
+        }
+    }
+    if (!token) {
+        throw new Error("MergeRisk commercial entitlement authentication returned an empty token.");
+    }
+    runtime.maskSecret(token);
+    const result = await client.check({
+        contractVersion: 1,
+        product: "mergerisk",
+        feature: "commercial-action",
+        organization: identity.organization,
+        repository: identity.repository,
+    }, token);
+    if (result.kind === "unavailable") {
+        runtime.warning(`MergeRisk entitlement service is temporarily unavailable; continuing this run under the documented outage policy (${config.timeoutMs} ms timeout).`);
+        return { mode: "commercial", state: "service_unavailable" };
+    }
+    if (result.kind === "denied") {
+        throw new Error(denialMessage(identity.organization, result.status));
+    }
+    runtime.info(`MergeRisk commercial entitlement confirmed for organization ${identity.organization} (${result.status}).`);
+    return {
+        mode: "commercial",
+        state: "entitled",
+        status: result.status,
+    };
 }
 
 ;// CONCATENATED MODULE: ./src/report/markdown.ts
@@ -48315,6 +48587,7 @@ async function loadTestPolicy(policyPath) {
 
 
 
+
 const rank = {
     low: 0,
     medium: 1,
@@ -48346,14 +48619,24 @@ async function run() {
             "test-review-mode": getInput("test-review-mode"),
             "test-policy-path": getInput("test-policy-path"),
             "ai-timeout-ms": getInput("ai-timeout-ms"),
+            "entitlement-mode": getInput("entitlement-mode"),
+            "entitlement-url": getInput("entitlement-url"),
+            "entitlement-token": getInput("entitlement-token"),
+            "entitlement-timeout-ms": getInput("entitlement-timeout-ms"),
         });
         if (config.apiKey) {
-            core_setSecret(config.apiKey);
+            setSecret(config.apiKey);
         }
-        const octokit = getOctokit(config.githubToken);
         const owner = github_context.repo.owner;
         const repo = github_context.repo.repo;
         const pullNumber = pullRequest.number;
+        await enforceEntitlement(config.entitlement, { organization: owner, repository: `${owner}/${repo}` }, {
+            getOidcToken: (audience) => getIDToken(audience),
+            maskSecret: (secret) => setSecret(secret),
+            info: (message) => info(message),
+            warning: (message) => warning(message),
+        });
+        const octokit = getOctokit(config.githubToken);
         const rules = await loadRiskRules(config.riskProfilePath);
         const testPolicy = await loadTestPolicy(config.testPolicyPath);
         const files = await listPullRequestFiles(octokit, { owner, repo, pullNumber });

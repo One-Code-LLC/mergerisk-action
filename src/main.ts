@@ -3,6 +3,7 @@ import * as github from "@actions/github";
 import { parseConfigFromInputs } from "./config.js";
 import { synthesizeSummary } from "./ai/synthesize.js";
 import { reviewTestsWithAgent } from "./ai/test-review.js";
+import { enforceEntitlement } from "./entitlement/check.js";
 import { upsertReportComment } from "./github/comment.js";
 import { listPullRequestFiles } from "./github/pull-request.js";
 import { renderReport } from "./report/markdown.js";
@@ -48,16 +49,32 @@ export async function run(): Promise<void> {
       "test-review-mode": core.getInput("test-review-mode"),
       "test-policy-path": core.getInput("test-policy-path"),
       "ai-timeout-ms": core.getInput("ai-timeout-ms"),
+      "entitlement-mode": core.getInput("entitlement-mode"),
+      "entitlement-url": core.getInput("entitlement-url"),
+      "entitlement-token": core.getInput("entitlement-token"),
+      "entitlement-timeout-ms": core.getInput("entitlement-timeout-ms"),
     });
 
     if (config.apiKey) {
       core.setSecret(config.apiKey);
     }
 
-    const octokit = github.getOctokit(config.githubToken);
     const owner = github.context.repo.owner;
     const repo = github.context.repo.repo;
     const pullNumber = pullRequest.number;
+
+    await enforceEntitlement(
+      config.entitlement,
+      { organization: owner, repository: `${owner}/${repo}` },
+      {
+        getOidcToken: (audience) => core.getIDToken(audience),
+        maskSecret: (secret) => core.setSecret(secret),
+        info: (message) => core.info(message),
+        warning: (message) => core.warning(message),
+      },
+    );
+
+    const octokit = github.getOctokit(config.githubToken);
 
     const rules = await loadRiskRules(config.riskProfilePath);
     const testPolicy = await loadTestPolicy(config.testPolicyPath);

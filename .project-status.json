@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "name": "MergeRisk",
+  "status": "planned",
+  "reviewed": true,
+  "roadmap": {
+    "outcome": "Deliver an advisory, evidence-backed direct-coverage review for pull requests.",
+    "currentStage": 1,
+    "stages": [
+      {
+        "id": "direct-coverage-review",
+        "title": "Direct coverage review"
+      }
+    ]
+  }
+}

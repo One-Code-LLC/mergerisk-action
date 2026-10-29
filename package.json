@@ -20,7 +20,7 @@
     "yaml": "^2.6.1"
   },
   "overrides": {
-    "undici": "^6.27.0"
+    "undici": "^6.29.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
